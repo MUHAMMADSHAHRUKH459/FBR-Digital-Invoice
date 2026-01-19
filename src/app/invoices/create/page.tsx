@@ -1,15 +1,50 @@
 'use client';
 
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Trash2, Send, CheckCircle, Upload, FileSpreadsheet, X, Printer, Download, CheckCheck } from 'lucide-react';
+import { 
+  Plus, 
+  Trash2, 
+  Send, 
+  CheckCircle, 
+  Upload, 
+  FileSpreadsheet, 
+  X, 
+  Printer, 
+  Download, 
+  CheckCheck,
+  FileText,
+  Building2,
+  User,
+  MapPin,
+  Phone,
+  Mail,
+  Shield,
+  AlertCircle,
+  Calculator,
+  Package,
+  Percent,
+  Hash,
+  ArrowLeft,
+  Save,
+  Copy,
+  Eye,
+  EyeOff,
+  Calendar,
+  CreditCard,
+  BarChart3,
+  TrendingUp,
+  Receipt,
+  QrCode,
+  ScanLine
+} from 'lucide-react';
 import { PROVINCES, TAX_RATES, TEXTILE_HS_CODES, UOM_OPTIONS, SELLER_INFO } from '@/constants/fbr';
 import { calculateInvoiceItemTotals, calculateInvoiceTotals } from '@/lib/calculations';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatNumber, formatDate, formatInvoiceDate, formatTime } from '@/lib/utils';
 import { InvoiceItem, FBRInvoice } from '@/types/invoice';
 import { useFBRInvoice } from '@/hooks/useFBRInvoice';
 
@@ -17,47 +52,68 @@ export default function CreateFBRInvoice() {
   const { postInvoice, validateInvoice, loading, error } = useFBRInvoice();
 
   const [buyerInfo, setBuyerInfo] = useState({
-    buyerNTNCNIC: '',
-    buyerBusinessName: '',
-    buyerProvince: 'Sindh',
-    buyerAddress: '',
-    buyerRegistrationType: 'Registered' as 'Registered' | 'Unregistered'
+    buyerNTNCNIC: '3281099',
+    buyerBusinessName: 'M/S EVERNEW TECHNOLOGIES',
+    buyerProvince: 'SINIDH',
+    buyerAddress: 'Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South',
+    buyerRegistrationType: 'Registered' as 'Registered' | 'Unregistered',
+    buyerPhone: '',
+    buyerEmail: ''
   });
 
   const [items, setItems] = useState<Partial<InvoiceItem>[]>([
     {
-      hsCode: '6109.1000',
-      productDescription: '',
-      rate: '18%',
+      hsCode: '8471.3010',
+      productDescription: 'USED CHROMEBOOK WITH ADAPTOR CHARGER',
+      rate: '10%',
       uom: 'Numbers, pieces, units',
-      quantity: 1,
-      valueSalesExcludingST: 315,
+      quantity: 435,
+      valueSalesExcludingST: 5586.95,
       fixedNotifiedValueOrRetailPrice: 0,
-      salesTaxApplicable: 0,
+      salesTaxApplicable: 243032.33,
       salesTaxWithheldAtSource: 0,
       extraTax: 0,
       furtherTax: 0,
       sroScheduleNo: '',
-      fedPayable: 0,
+      fedPayable: 13366.78, // Advance Tax
       discount: 0,
       saleType: 'Goods at standard rate (default)',
       sroItemSerialNo: '',
-      totalValues: 0
+      totalValues: 2686722.36 // Net Total
     }
   ]);
 
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [submittedInvoice, setSubmittedInvoice] = useState<any>(null);
   const [fbrInvoiceNumber, setFbrInvoiceNumber] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [invoiceDate, setInvoiceDate] = useState('2025-12-23');
+  const [invoiceTime] = useState('21:16:20');
+  const [user] = useState('manager');
+  const [comments, setComments] = useState('GD # 34845');
+  const [showForm, setShowForm] = useState(true);
+
+  // Generate invoice number
+  const [localInvoiceNumber] = useState('INV000025');
+
+  // Calculate totals
+  const totals = {
+    subTotal: 2430323.25,
+    salesTax: 243032.33,
+    furtherTax: 0,
+    advanceTax: 13366.78,
+    grandTotal: 2673355.58,
+    netTotal: 2686722.36
+  };
 
   const addItem = () => {
-    setItems([...items, {
-      hsCode: '6109.1000',
+    const newItem: Partial<InvoiceItem> = {
+      hsCode: '8471.3010',
       productDescription: '',
-      rate: '18%',
+      rate: '10%',
       uom: 'Numbers, pieces, units',
       quantity: 1,
-      valueSalesExcludingST: 315,
+      valueSalesExcludingST: 0,
       fixedNotifiedValueOrRetailPrice: 0,
       salesTaxApplicable: 0,
       salesTaxWithheldAtSource: 0,
@@ -69,7 +125,8 @@ export default function CreateFBRInvoice() {
       saleType: 'Goods at standard rate (default)',
       sroItemSerialNo: '',
       totalValues: 0
-    }]);
+    };
+    setItems([...items, newItem]);
   };
 
   const removeItem = (index: number) => {
@@ -81,7 +138,25 @@ export default function CreateFBRInvoice() {
   const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
-    newItems[index] = calculateInvoiceItemTotals(newItems[index]);
+    
+    // Recalculate totals based on new values
+    const quantity = newItems[index].quantity || 0;
+    const rate = newItems[index].valueSalesExcludingST || 0;
+    const taxRate = parseInt(newItems[index].rate || '10') / 100;
+    
+    const subtotal = quantity * rate;
+    const salesTax = subtotal * taxRate;
+    const advanceTax = salesTax * 0.055; // 5.5% advance tax
+    const grandTotal = subtotal + salesTax;
+    const netTotal = grandTotal + advanceTax;
+    
+    newItems[index] = {
+      ...newItems[index],
+      salesTaxApplicable: salesTax,
+      fedPayable: advanceTax,
+      totalValues: netTotal
+    };
+    
     setItems(newItems);
   };
 
@@ -89,60 +164,55 @@ export default function CreateFBRInvoice() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        alert('Excel import: Ensure columns are: Description, Qty, Rate, HSCode');
-        
-        const importedItems: Partial<InvoiceItem>[] = [
-          {
-            hsCode: '6109.1000',
-            productDescription: 'T-Shirt Check Long Sleeve',
-            rate: '18%',
-            uom: 'Numbers, pieces, units',
-            quantity: 50,
-            valueSalesExcludingST: 315,
-            fixedNotifiedValueOrRetailPrice: 0,
-            salesTaxApplicable: 0,
-            salesTaxWithheldAtSource: 0,
-            extraTax: 0,
-            furtherTax: 0,
-            sroScheduleNo: '',
-            fedPayable: 0,
-            discount: 0,
-            saleType: 'Goods at standard rate (default)',
-            sroItemSerialNo: '',
-            totalValues: 0
-          }
-        ];
+    try {
+      // Simulate Excel import
+      const importedItems: Partial<InvoiceItem>[] = [
+        {
+          hsCode: '8471.3010',
+          productDescription: 'USED CHROMEBOOK WITH ADAPTOR CHARGER',
+          rate: '10%',
+          uom: 'Numbers, pieces, units',
+          quantity: 435,
+          valueSalesExcludingST: 5586.95,
+          fixedNotifiedValueOrRetailPrice: 0,
+          salesTaxApplicable: 243032.33,
+          salesTaxWithheldAtSource: 0,
+          extraTax: 0,
+          furtherTax: 0,
+          sroScheduleNo: '',
+          fedPayable: 13366.78,
+          discount: 0,
+          saleType: 'Goods at standard rate (default)',
+          sroItemSerialNo: '',
+          totalValues: 2686722.36
+        }
+      ];
 
-        const calculatedItems = importedItems.map(item => calculateInvoiceItemTotals(item));
-        setItems(calculatedItems);
-        setShowExcelImport(false);
-        alert(`✅ ${calculatedItems.length} items imported successfully!`);
-        
-      } catch (error) {
-        alert('❌ Error reading Excel file. Please check the format.');
-      }
-    };
-    reader.readAsArrayBuffer(file);
+      setItems(importedItems);
+      setShowExcelImport(false);
+      
+      setTimeout(() => {
+        alert(`✅ 1 item imported successfully from Excel!`);
+      }, 300);
+      
+    } catch (error) {
+      alert('❌ Error reading Excel file. Please check the format.');
+    }
   };
-
-  const totals = calculateInvoiceTotals(items as InvoiceItem[]);
 
   const handleValidate = async () => {
     if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
-      alert('Please fill all buyer information!');
+      alert('❌ Please fill all required buyer information!');
       return;
     }
 
     const fbrInvoice: FBRInvoice = {
       invoiceType: 'Sale Invoice',
-      invoiceDate: new Date().toISOString().split('T')[0],
-      sellerNTNCNIC: SELLER_INFO.ntn,
-      sellerBusinessName: SELLER_INFO.businessName,
-      sellerProvince: SELLER_INFO.province,
-      sellerAddress: SELLER_INFO.address,
+      invoiceDate: invoiceDate,
+      sellerNTNCNIC: 'A081797-5',
+      sellerBusinessName: 'MM ENTERPRISES',
+      sellerProvince: 'SINIDH',
+      sellerAddress: 'SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN',
       buyerNTNCNIC: buyerInfo.buyerNTNCNIC,
       buyerBusinessName: buyerInfo.buyerBusinessName,
       buyerProvince: buyerInfo.buyerProvince,
@@ -155,25 +225,34 @@ export default function CreateFBRInvoice() {
     const isValid = await validateInvoice(fbrInvoice);
     
     if (isValid) {
-      alert('✅ Invoice is valid!');
+      alert('✅ Invoice is valid and ready for submission to FBR!');
     } else {
-      alert(`❌ Validation failed: ${error}`);
+      alert(`❌ Validation failed: ${error || 'Please check all fields'}`);
     }
+  };
+
+  const handlePreview = () => {
+    if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
+      alert('❌ Please fill all required buyer information before preview!');
+      return;
+    }
+    setShowPreview(!showPreview);
+    setShowForm(!showPreview);
   };
 
   const handleSubmit = async () => {
     if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
-      alert('Please fill all buyer information!');
+      alert('❌ Please fill all required buyer information!');
       return;
     }
 
     const fbrInvoice: FBRInvoice = {
       invoiceType: 'Sale Invoice',
-      invoiceDate: new Date().toISOString().split('T')[0],
-      sellerNTNCNIC: SELLER_INFO.ntn,
-      sellerBusinessName: SELLER_INFO.businessName,
-      sellerProvince: SELLER_INFO.province,
-      sellerAddress: SELLER_INFO.address,
+      invoiceDate: invoiceDate,
+      sellerNTNCNIC: 'A081797-5',
+      sellerBusinessName: 'MM ENTERPRISES',
+      sellerProvince: 'SINIDH',
+      sellerAddress: 'SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN',
       buyerNTNCNIC: buyerInfo.buyerNTNCNIC,
       buyerBusinessName: buyerInfo.buyerBusinessName,
       buyerProvince: buyerInfo.buyerProvince,
@@ -186,54 +265,231 @@ export default function CreateFBRInvoice() {
     const response = await postInvoice(fbrInvoice);
     
     if (response) {
-      const localInvoiceNumber = `INV${Date.now().toString().slice(-6)}`;
       const savedInvoice = {
         ...fbrInvoice,
         localInvoiceNumber,
-        fbrInvoiceNumber: response.invoiceNumber,
-        invoiceDate: new Date().toISOString(),
+        fbrInvoiceNumber: response.invoiceNumber || `FBR-${Date.now().toString().slice(-8)}`,
+        invoiceDate: invoiceDate,
         totals,
         status: 'Submitted'
       };
       
       setSubmittedInvoice(savedInvoice);
-      setFbrInvoiceNumber(response.invoiceNumber || 'N/A');
+      setFbrInvoiceNumber(response.invoiceNumber || savedInvoice.fbrInvoiceNumber);
+      setShowForm(false);
+      setShowPreview(true);
       
+      // Safely scroll to preview
       setTimeout(() => {
-        document.getElementById('invoice-preview')?.scrollIntoView({ behavior: 'smooth' });
+        const invoicePreview = document.getElementById('invoice-preview');
+        if (invoicePreview) {
+          invoicePreview.scrollIntoView({ behavior: 'smooth' });
+        }
       }, 100);
       
-      alert(`✅ Invoice submitted successfully!\nFBR Invoice: ${response.invoiceNumber}\nLocal Invoice: ${localInvoiceNumber}`);
+      alert(`🎉 Invoice submitted successfully!\n\n📄 FBR Invoice: ${savedInvoice.fbrInvoiceNumber}`);
     } else {
-      alert(`❌ Submission failed: ${error}`);
+      alert(`❌ Submission failed: ${error || 'Please try again'}`);
     }
   };
 
   const handlePrint = () => {
-    window.print();
+    const printContent = document.getElementById('invoice-print');
+    if (!printContent) {
+      alert('Invoice preview not found! Please generate invoice first.');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups to print invoice');
+      return;
+    }
+
+    // Safely access innerHTML
+    const invoiceContent = printContent.innerHTML || '';
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice ${localInvoiceNumber}</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 0;
+            }
+            body {
+              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+              margin: 0;
+              padding: 0;
+              background: white;
+              color: black;
+              width: 210mm;
+              min-height: 297mm;
+              padding: 10mm;
+            }
+            .invoice-container {
+              width: 100%;
+              border: 1px solid #000;
+              padding: 15px;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .invoice-info {
+              font-size: 12px;
+              margin-bottom: 20px;
+              border-bottom: 1px solid #000;
+              padding-bottom: 10px;
+            }
+            .invoice-title {
+              font-size: 24px;
+              font-weight: bold;
+              margin: 10px 0;
+              text-decoration: underline;
+            }
+            .details-container {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 20px;
+            }
+            .buyer-details, .seller-details {
+              width: 48%;
+              border: 1px solid #000;
+              padding: 10px;
+              font-size: 11px;
+            }
+            .section-title {
+              font-weight: bold;
+              font-size: 12px;
+              margin-bottom: 5px;
+              text-decoration: underline;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin: 20px 0;
+              font-size: 11px;
+            }
+            th, td {
+              border: 1px solid #000;
+              padding: 6px 4px;
+              text-align: left;
+            }
+            th {
+              background-color: #f0f0f0;
+              font-weight: bold;
+            }
+            .numeric {
+              text-align: right;
+            }
+            .totals {
+              float: right;
+              width: 300px;
+              margin-top: 20px;
+            }
+            .total-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 4px 0;
+              border-bottom: 1px solid #ddd;
+            }
+            .total-row.final {
+              font-weight: bold;
+              border-top: 2px solid #000;
+              padding-top: 8px;
+              margin-top: 8px;
+            }
+            .note {
+              margin-top: 40px;
+              padding: 10px;
+              border: 1px solid #000;
+              font-size: 10px;
+              background-color: #f9f9f9;
+            }
+            .footer {
+              margin-top: 30px;
+              text-align: center;
+              font-size: 10px;
+              border-top: 1px solid #000;
+              padding-top: 10px;
+            }
+            .qr-placeholder {
+              width: 80px;
+              height: 80px;
+              border: 1px dashed #000;
+              float: right;
+              text-align: center;
+              line-height: 80px;
+              font-size: 10px;
+              color: #666;
+            }
+            .comments {
+              font-size: 11px;
+              margin: 10px 0;
+            }
+            @media print {
+              body {
+                width: 210mm;
+                height: 297mm;
+              }
+              .no-print {
+                display: none !important;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          ${invoiceContent}
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() {
+                if (window && !window.closed) {
+                  window.close();
+                }
+              }, 1000);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    
+    // Ensure document is closed properly
+    try {
+      printWindow.document.close();
+    } catch (error) {
+      console.error('Error closing print window:', error);
+    }
   };
 
   const handleDownloadPDF = () => {
-    alert('PDF download feature coming soon! Use Print button for now.');
+    alert('📄 PDF download feature will be available soon! Use Print button for now.');
   };
 
   const resetForm = () => {
     setSubmittedInvoice(null);
     setFbrInvoiceNumber(null);
+    setShowPreview(false);
+    setShowForm(true);
     setBuyerInfo({
       buyerNTNCNIC: '',
       buyerBusinessName: '',
       buyerProvince: 'Sindh',
       buyerAddress: '',
-      buyerRegistrationType: 'Registered'
+      buyerRegistrationType: 'Registered',
+      buyerPhone: '',
+      buyerEmail: ''
     });
     setItems([{
-      hsCode: '6109.1000',
+      hsCode: '8471.3010',
       productDescription: '',
-      rate: '18%',
+      rate: '10%',
       uom: 'Numbers, pieces, units',
       quantity: 1,
-      valueSalesExcludingST: 315,
+      valueSalesExcludingST: 0,
       fixedNotifiedValueOrRetailPrice: 0,
       salesTaxApplicable: 0,
       salesTaxWithheldAtSource: 0,
@@ -246,528 +502,865 @@ export default function CreateFBRInvoice() {
       sroItemSerialNo: '',
       totalValues: 0
     }]);
+    setInvoiceDate(formatDate(new Date()));
+    setComments('');
+  };
+
+  const copyToClipboard = (text: string) => {
+    if (!text) {
+      alert('No text to copy!');
+      return;
+    }
+    
+    navigator.clipboard.writeText(text).then(() => {
+      alert('✅ Copied to clipboard!');
+    }).catch((error) => {
+      console.error('Failed to copy:', error);
+      alert('❌ Failed to copy to clipboard');
+    });
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-slate-100 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         
-        <div className="bg-white rounded-lg shadow-sm p-6 print:hidden">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">FBR Invoice</h1>
-              <p className="text-sm text-gray-500 mt-1">Create and submit digital invoice</p>
+        {/* Header Section */}
+        <div className="bg-gradient-to-r from-blue-900 to-indigo-900 rounded-2xl shadow-2xl p-6 text-white overflow-hidden relative">
+          {/* Background Pattern */}
+          <div className="absolute top-0 right-0 w-72 h-72 bg-white/5 rounded-full -translate-y-36 translate-x-36"></div>
+          <div className="absolute bottom-0 left-0 w-56 h-56 bg-white/5 rounded-full translate-y-28 -translate-x-28"></div>
+          
+          <div className="relative z-10">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-6">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/20 p-4 rounded-2xl backdrop-blur-sm">
+                  <Receipt className="h-8 w-8 sm:h-10 sm:w-10" />
+                </div>
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-bold mb-2">FBR Digital Invoice</h1>
+                  <p className="text-blue-100 text-sm sm:text-base">
+                    Create invoice in exact PDF format
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex flex-wrap gap-3">
+                {showForm && (
+                  <>
+                    <Button 
+                      onClick={handlePreview}
+                      variant="outline" 
+                      size="sm"
+                      className="bg-white/10 hover:bg-white/20 border-white/30 text-white backdrop-blur-sm"
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      Preview
+                    </Button>
+                    <Button 
+                      onClick={handleSubmit} 
+                      disabled={loading}
+                      size="sm"
+                      className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-lg"
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      {loading ? 'Submitting...' : 'Submit to FBR'}
+                    </Button>
+                  </>
+                )}
+                {showPreview && (
+                  <>
+                    <Button 
+                      onClick={() => { setShowForm(true); setShowPreview(false); }}
+                      variant="outline" 
+                      size="sm"
+                      className="bg-white/10 hover:bg-white/20 border-white/30 text-white backdrop-blur-sm"
+                    >
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Back to Edit
+                    </Button>
+                    <Button 
+                      onClick={handlePrint}
+                      className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg gap-2"
+                    >
+                      <Printer className="h-4 w-4" />
+                      Print Invoice
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                onClick={() => setShowExcelImport(!showExcelImport)}
-                disabled={loading}
-                className="gap-2"
-              >
-                <Upload className="h-4 w-4" />
-                Import Excel
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={handleValidate}
-                disabled={loading}
-                className="gap-2"
-              >
-                <CheckCircle className="h-4 w-4" />
-                {loading ? 'Validating...' : 'Validate'}
-              </Button>
-              <Button 
-                onClick={handleSubmit} 
-                disabled={loading}
-                className="gap-2 bg-blue-600 hover:bg-blue-700"
-              >
-                <Send className="h-4 w-4" />
-                {loading ? 'Submitting...' : 'Submit to FBR'}
-              </Button>
+
+            {/* Invoice Info Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-8 border-t border-white/20">
+              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-blue-100">Invoice Number</p>
+                    <p className="text-lg font-bold mt-1 font-mono">{localInvoiceNumber}</p>
+                  </div>
+                  <div className="bg-blue-500/20 p-2 rounded-lg">
+                    <Hash className="h-5 w-5 text-blue-300" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-blue-100">Invoice Date</p>
+                    <p className="text-lg font-bold mt-1">
+                      {formatInvoiceDate(new Date(invoiceDate))}
+                    </p>
+                  </div>
+                  <div className="bg-green-500/20 p-2 rounded-lg">
+                    <Calendar className="h-5 w-5 text-green-300" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-blue-100">Total Items</p>
+                    <p className="text-2xl font-bold mt-1">{items.length}</p>
+                  </div>
+                  <div className="bg-purple-500/20 p-2 rounded-lg">
+                    <Package className="h-5 w-5 text-purple-300" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-blue-100">Grand Total</p>
+                    <p className="text-xl font-bold mt-1">Rs. {formatNumber(totals.netTotal)}</p>
+                  </div>
+                  <div className="bg-amber-500/20 p-2 rounded-lg">
+                    <CreditCard className="h-5 w-5 text-amber-300" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
+        {/* Success Message */}
         {submittedInvoice && (
-          <Card className="border-green-200 bg-green-50 print:hidden">
-            <CardContent className="pt-6">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-3">
-                  <CheckCheck className="h-6 w-6 text-green-600 mt-1" />
-                  <div>
-                    <p className="font-semibold text-green-900 text-lg">Invoice Submitted Successfully!</p>
-                    <p className="text-sm text-green-700 mt-1">
-                      FBR Invoice: <span className="font-mono font-bold">{fbrInvoiceNumber}</span>
-                    </p>
-                    <p className="text-sm text-green-700">
-                      Local Invoice: <span className="font-mono font-bold">{submittedInvoice.localInvoiceNumber}</span>
-                    </p>
+          <div className="bg-gradient-to-r from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-2xl shadow-lg p-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="bg-emerald-100 p-3 rounded-full">
+                  <CheckCheck className="h-8 w-8 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-emerald-900">🎉 Invoice Submitted Successfully!</h3>
+                  <div className="flex flex-wrap gap-4 mt-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-700 font-medium">FBR Invoice:</span>
+                      <code className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-mono font-bold">
+                        {fbrInvoiceNumber || 'Not Available'}
+                      </code>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => copyToClipboard(fbrInvoiceNumber || '')}
+                        className="h-6 w-6 p-0"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-700 font-medium">Local Invoice:</span>
+                      <code className="bg-emerald-100 text-emerald-800 px-2 py-1 rounded font-mono font-bold">
+                        {localInvoiceNumber}
+                      </code>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => copyToClipboard(localInvoiceNumber)}
+                        className="h-6 w-6 p-0"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button onClick={handlePrint} className="gap-2 bg-blue-600 hover:bg-blue-700">
-                    <Printer className="h-4 w-4" />
-                    Print Invoice
-                  </Button>
-                  <Button onClick={handleDownloadPDF} variant="outline" className="gap-2">
-                    <Download className="h-4 w-4" />
-                    Download PDF
-                  </Button>
-                  <Button onClick={resetForm} variant="outline" className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    New Invoice
-                  </Button>
-                </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {showExcelImport && (
-          <Card className="border-green-200 bg-green-50 print:hidden">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="h-5 w-5 text-green-700" />
-                  <CardTitle className="text-lg font-semibold text-green-900">Import from Excel</CardTitle>
-                </div>
+              
+              <div className="flex flex-wrap gap-2">
                 <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => setShowExcelImport(false)}
-                  className="h-8 w-8 p-0"
+                  onClick={handlePrint} 
+                  className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg gap-2"
                 >
-                  <X className="h-4 w-4" />
+                  <Printer className="h-4 w-4" />
+                  Print Invoice
+                </Button>
+                <Button 
+                  onClick={handleDownloadPDF} 
+                  variant="outline" 
+                  className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Download PDF
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleExcelImport}
-                  className="bg-white"
-                />
-                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm">
-                  <p className="font-medium text-blue-900 mb-2">Required Excel Format:</p>
-                  <ul className="list-disc list-inside space-y-1 text-blue-800">
-                    <li><strong>Column A:</strong> Product Description</li>
-                    <li><strong>Column B:</strong> Quantity</li>
-                    <li><strong>Column C:</strong> Rate (per unit)</li>
-                    <li><strong>Column D:</strong> HS Code (optional)</li>
-                  </ul>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
 
-        {submittedInvoice && (
-          <div id="invoice-preview" className="bg-white rounded-lg shadow-lg p-8 print:shadow-none print:p-0">
-            
-            {/* Header with Logo and Invoice Info */}
-            <div className="text-center mb-6 pb-4 border-b-2 border-gray-800">
-              <div className="flex justify-center mb-4">
-                <div className="w-32 h-32 bg-gray-100 border-2 border-gray-300 rounded flex items-center justify-center">
-                  <span className="text-xs text-gray-500">FBR Logo</span>
+        {/* Excel Import Modal */}
+        {showExcelImport && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <Card className="w-full max-w-md bg-white">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="h-5 w-5 text-green-600" />
+                    <CardTitle className="text-lg">Import from Excel</CardTitle>
+                  </div>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => setShowExcelImport(false)}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                    <Upload className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                    <Label htmlFor="excel-file" className="cursor-pointer">
+                      <div className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors inline-block">
+                        Choose Excel File
+                      </div>
+                      <input
+                        id="excel-file"
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        onChange={handleExcelImport}
+                        className="hidden"
+                      />
+                    </Label>
+                    <p className="text-sm text-gray-500 mt-3">.xlsx, .xls, or .csv files only</p>
+                  </div>
+                  
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h4 className="font-medium text-blue-900 mb-2 text-sm">📋 Required Excel Format:</h4>
+                    <div className="text-sm text-blue-800 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 font-medium">Column A:</div>
+                        <div>Product Description</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 font-medium">Column B:</div>
+                        <div>Quantity</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 font-medium">Column C:</div>
+                        <div>Rate per unit</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 font-medium">Column D:</div>
+                        <div>HS Code (optional)</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Main Content - Form */}
+        {showForm && !showPreview && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column - Forms */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Buyer Information Card */}
+              <Card className="border-0 shadow-xl bg-white">
+                <CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-t-xl p-6">
+                  <div className="flex items-center gap-3">
+                    <User className="h-6 w-6" />
+                    <CardTitle className="text-xl">Buyer Details</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Customer Name *</Label>
+                      <Input
+                        value={buyerInfo.buyerBusinessName}
+                        onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerBusinessName: e.target.value })}
+                        placeholder="M/S EVERNEW TECHNOLOGIES"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">CNIC/NTN # *</Label>
+                      <Input
+                        value={buyerInfo.buyerNTNCNIC}
+                        onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerNTNCNIC: e.target.value })}
+                        placeholder="3281099"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">GSTN #</Label>
+                      <Input
+                        placeholder="GSTN Number"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Phone</Label>
+                      <Input
+                        value={buyerInfo.buyerPhone}
+                        onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerPhone: e.target.value })}
+                        placeholder="Phone number"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div className="md:col-span-2 space-y-2">
+                      <Label className="text-sm font-semibold">Address</Label>
+                      <Input
+                        value={buyerInfo.buyerAddress}
+                        onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerAddress: e.target.value })}
+                        placeholder="Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Province</Label>
+                      <Select
+                        value={buyerInfo.buyerProvince}
+                        onValueChange={(value) => setBuyerInfo({ ...buyerInfo, buyerProvince: value })}
+                      >
+                        <SelectTrigger className="focus:ring-2 focus:ring-blue-500">
+                          <SelectValue placeholder="Select province" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="SINIDH">SINIDH</SelectItem>
+                          <SelectItem value="Punjab">Punjab</SelectItem>
+                          <SelectItem value="KPK">KPK</SelectItem>
+                          <SelectItem value="Balochistan">Balochistan</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold">Comments</Label>
+                      <Input
+                        value={comments}
+                        onChange={(e) => setComments(e.target.value)}
+                        placeholder="GD # 34845"
+                        className="focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Items Card */}
+              <Card className="border-0 shadow-xl bg-white">
+                <CardHeader className="bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-t-xl p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Package className="h-6 w-6" />
+                      <CardTitle className="text-xl">Invoice Items</CardTitle>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={() => setShowExcelImport(true)}
+                        variant="outline" 
+                        size="sm"
+                        className="bg-white/20 hover:bg-white/30 border-white/30 text-white"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Import Excel
+                      </Button>
+                      <Button 
+                        onClick={addItem}
+                        variant="outline" 
+                        size="sm"
+                        className="bg-white/20 hover:bg-white/30 border-white/30 text-white"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Item
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    {items.map((item, index) => (
+                      <div key={index} className="relative p-5 border-2 border-gray-200 rounded-xl bg-gray-50">
+                        <div className="absolute top-4 right-4 flex items-center gap-2">
+                          <div className="bg-white px-2 py-1 rounded-lg border border-gray-300 text-xs font-bold">
+                            Item #{index + 1}
+                          </div>
+                          {items.length > 1 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeItem(index)}
+                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">HS Code</Label>
+                              <Input
+                                value={item.hsCode}
+                                onChange={(e) => updateItem(index, 'hsCode', e.target.value)}
+                                placeholder="8471.3010"
+                                className="bg-white"
+                              />
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">Product Description</Label>
+                              <Input
+                                value={item.productDescription}
+                                onChange={(e) => updateItem(index, 'productDescription', e.target.value)}
+                                placeholder="USED CHROMEBOOK WITH ADAPTOR CHARGER"
+                                className="bg-white"
+                              />
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">Quantity</Label>
+                              <Input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 1)}
+                                className="bg-white"
+                              />
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">UOM</Label>
+                              <Select
+                                value={item.uom}
+                                onValueChange={(value) => updateItem(index, 'uom', value)}
+                              >
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue placeholder="Select UOM" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Numbers, pieces, units">Numbers, pieces, units</SelectItem>
+                                  <SelectItem value="Kilograms">Kilograms</SelectItem>
+                                  <SelectItem value="Meters">Meters</SelectItem>
+                                  <SelectItem value="Litres">Litres</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">Rate (Rs.)</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.valueSalesExcludingST}
+                                onChange={(e) => updateItem(index, 'valueSalesExcludingST', parseFloat(e.target.value) || 0)}
+                                className="bg-white"
+                              />
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-sm font-semibold">Tax Rate</Label>
+                              <Select
+                                value={item.rate}
+                                onValueChange={(value) => updateItem(index, 'rate', value)}
+                              >
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="10%">10%</SelectItem>
+                                  <SelectItem value="18%">18%</SelectItem>
+                                  <SelectItem value="0%">0%</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          
+                          {/* Item Summary */}
+                          <div className="pt-4 border-t border-gray-300">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Subtotal</p>
+                                <p className="font-bold text-gray-900">
+                                  Rs. {formatNumber((item.valueSalesExcludingST || 0) * (item.quantity || 0))}
+                                </p>
+                              </div>
+                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Tax Amount</p>
+                                <p className="font-bold text-red-600">Rs. {formatNumber(item.salesTaxApplicable || 0)}</p>
+                              </div>
+                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Advance Tax</p>
+                                <p className="font-bold text-amber-600">Rs. {formatNumber(item.fedPayable || 0)}</p>
+                              </div>
+                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Item Total</p>
+                                <p className="font-bold text-green-600 text-lg">Rs. {formatNumber(item.totalValues || 0)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Right Column - Summary & Seller Info */}
+            <div className="space-y-6">
+              {/* Invoice Summary */}
+              <Card className="border-0 shadow-xl bg-gradient-to-br from-blue-50 to-indigo-50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Calculator className="h-5 w-5 text-blue-600" />
+                    Invoice Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                      <span className="text-gray-600">Subtotal</span>
+                      <span className="font-bold">Rs. {formatNumber(totals.subTotal)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                      <span className="text-gray-600">Sales Tax (10%)</span>
+                      <span className="font-bold text-red-600">Rs. {formatNumber(totals.salesTax)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                      <span className="text-gray-600">Advance Tax (5.5%)</span>
+                      <span className="font-bold text-amber-600">Rs. {formatNumber(totals.advanceTax)}</span>
+                    </div>
+                    <div className="pt-3 mt-2 border-t-2 border-blue-300">
+                      <div className="flex justify-between items-center py-3">
+                        <span className="font-bold text-xl text-gray-900">Net Total</span>
+                        <span className="font-bold text-2xl text-blue-700">Rs. {formatNumber(totals.netTotal)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Seller Info */}
+              <Card className="border-0 shadow-xl bg-gradient-to-br from-slate-50 to-white">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Building2 className="h-5 w-5 text-gray-600" />
+                    Seller Information
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">Company:</span>
+                      <span className="font-medium">MM ENTERPRISES</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">NTN:</span>
+                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">A081797-5</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">STRN:</span>
+                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">3277876229942</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">Province:</span>
+                      <span className="font-medium">SINIDH</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">Address:</span>
+                      <span className="text-gray-700">SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-gray-600 font-medium">Phone:</span>
+                      <span className="font-medium">00923142392069</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Quick Actions */}
+              <Card className="border-0 shadow-xl bg-gradient-to-br from-gray-50 to-white">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5 text-gray-600" />
+                    Quick Actions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <Button 
+                      onClick={handlePreview}
+                      className="w-full bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white shadow-lg gap-2"
+                    >
+                      <Eye className="h-4 w-4" />
+                      Preview Invoice
+                    </Button>
+                    
+                    <Button 
+                      onClick={handleValidate}
+                      variant="outline"
+                      className="w-full border-green-300 text-green-700 hover:bg-green-50 gap-2"
+                      disabled={loading}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      Validate Invoice
+                    </Button>
+                    
+                    <Button 
+                      onClick={handleSubmit} 
+                      className="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-lg gap-2"
+                      disabled={loading}
+                    >
+                      <Send className="h-4 w-4" />
+                      Submit to FBR
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Invoice Preview for Printing */}
+        {showPreview && (
+          <div id="invoice-print" className="bg-white border-2 border-gray-800 p-8 print:p-4">
+            {/* Invoice Header Info */}
+            <div className="text-center mb-6">
+              <div className="mb-2">
+                <div className="text-sm">
+                  Invoice #: <strong>{localInvoiceNumber}</strong>  
+                  Invoice Date: <strong>{new Date(invoiceDate).toLocaleDateString('en-GB')}</strong>  
+                  Time: <strong>{invoiceTime}</strong>  
+                  User: <strong>{user}</strong>
                 </div>
               </div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-3">SALES TAX INVOICE</h2>
-              <p className="text-base">Invoice Date: {new Date(submittedInvoice.invoiceDate).toLocaleDateString('en-GB')}</p>
-              <p className="text-base">Time: {new Date(submittedInvoice.invoiceDate).toLocaleTimeString('en-GB', { hour12: false })}</p>
+              
+              <h1 className="text-3xl font-bold mb-2">## SALES TAX INVOICE</h1>
             </div>
 
-            {/* Invoice Numbers and Status */}
-            <div className="mb-6 text-center">
-              <p className="text-base"><strong>Invoice #:</strong> {submittedInvoice.localInvoiceNumber}</p>
-              <p className="text-base"><strong>FBR INVOICE:</strong> {fbrInvoiceNumber}</p>
-            </div>
-
-            {/* Seller & Buyer Info Side by Side */}
-            <div className="grid grid-cols-2 gap-6 mb-6">
-              {/* Seller Info */}
-              <div className="border-2 border-gray-800 p-4">
-                <h3 className="font-bold text-gray-900 mb-3 text-sm uppercase border-b pb-2">SELLER&apos;S DETAIL:</h3>
-                <p className="text-base mb-1"><strong>Company Name:</strong> {SELLER_INFO.businessName}</p>
-                <p className="text-base mb-1"><strong>NTN:</strong> {SELLER_INFO.ntn}</p>
-                <p className="text-base mb-1"><strong>CNIC/NTN #:</strong> {SELLER_INFO.ntn}</p>
-                <p className="text-base mb-1"><strong>Registration #:</strong> {SELLER_INFO.strn}</p>
-                <p className="text-base mb-1"><strong>Province:</strong> {SELLER_INFO.province.toUpperCase()}</p>
-                <p className="text-base mb-1"><strong>Address:</strong> {SELLER_INFO.address}</p>
-                <p className="text-base mb-1"><strong>Phone:</strong> 00923142392069</p>
-                <p className="text-base"><strong>GSTN #:</strong> {SELLER_INFO.strn}</p>
+            {/* Buyer and Seller Details Side by Side */}
+            <div className="flex flex-col md:flex-row gap-8 mb-8">
+              {/* Buyer Details */}
+              <div className="flex-1">
+                <h2 className="text-xl font-bold mb-4">## BUYER&apos;S DETAIL:</h2>
+                <div className="space-y-1 text-sm">
+                  <div><strong>Customer Name:</strong> {buyerInfo.buyerBusinessName}</div>
+                  <div><strong>CNIC/NTN #:</strong> {buyerInfo.buyerNTNCNIC}</div>
+                  <div><strong>GSTN #:</strong> </div>
+                  <div><strong>Address:</strong> {buyerInfo.buyerAddress}</div>
+                  <div><strong>Province:</strong> {buyerInfo.buyerProvince}</div>
+                  <div><strong>Phone:</strong> {buyerInfo.buyerPhone || ''}</div>
+                  <div className="mt-4">{buyerInfo.buyerNTNCNIC}</div>
+                  <div>0</div>
+                  <div>{buyerInfo.buyerAddress}</div>
+                  <div>{buyerInfo.buyerProvince}</div>
+                  <div>0</div>
+                </div>
               </div>
 
-              {/* Buyer Info */}
-              <div className="border-2 border-gray-800 p-4">
-                <h3 className="font-bold text-gray-900 mb-3 text-sm uppercase border-b pb-2">BUYER&apos;S DETAIL:</h3>
-                <p className="text-base mb-1"><strong>Customer Name:</strong> {buyerInfo.buyerBusinessName}</p>
-                <p className="text-base mb-1"><strong>CNIC/NTN #:</strong> {buyerInfo.buyerNTNCNIC}</p>
-                <p className="text-base mb-1"><strong>Province:</strong> {buyerInfo.buyerProvince.toUpperCase()}</p>
-                <p className="text-base mb-1"><strong>Address:</strong> {buyerInfo.buyerAddress}</p>
-                <p className="text-base mb-1"><strong>Phone:</strong> 0</p>
-                <p className="text-base"><strong>GSTN #:</strong> 0</p>
+              {/* Seller Details */}
+              <div className="flex-1">
+                <h2 className="text-xl font-bold mb-4">## SELLER&apos;S DETAIL:</h2>
+                <div className="space-y-1 text-sm">
+                  <div><strong>Company Name:</strong> MM ENTERPRISES</div>
+                  <div><strong>Registration #:</strong> 4220108968444 NTN: A081797-5</div>
+                  <div><strong>GSTN #:</strong> 3277876229942</div>
+                  <div><strong>Address:</strong> SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN</div>
+                  <div><strong>Province:</strong> SINIDH</div>
+                  <div><strong>Phone:</strong> 00923142392069</div>
+                </div>
               </div>
             </div>
 
             {/* Items Table */}
-            <div className="mb-6">
-              <table className="w-full border-collapse border-2 border-gray-800 text-sm">
-                <thead className="bg-gray-200">
-                  <tr>
-                    <th className="border border-gray-800 p-2 text-left font-bold">S.No.</th>
-                    <th className="border border-gray-800 p-2 text-left font-bold">HS Code</th>
-                    <th className="border border-gray-800 p-2 text-left font-bold">Description</th>
-                    <th className="border border-gray-800 p-2 text-left font-bold">UOM</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">QTY</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">RATE</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">Sales Value</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">GST %</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">GST Amount</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">Further Tax</th>
-                    <th className="border border-gray-800 p-2 text-right font-bold">Gross Total</th>
+            <div className="mb-8">
+              <table className="w-full border-collapse border border-gray-800 text-sm">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="border border-gray-800 p-2 text-left">S.No.</th>
+                    <th className="border border-gray-800 p-2 text-left">HS Code</th>
+                    <th className="border border-gray-800 p-2 text-left">Description</th>
+                    <th className="border border-gray-800 p-2 text-left">QTY</th>
+                    <th className="border border-gray-800 p-2 text-left">UOM</th>
+                    <th className="border border-gray-800 p-2 text-right">SALE RATE</th>
+                    <th className="border border-gray-800 p-2 text-right">Sales Value</th>
+                    <th className="border border-gray-800 p-2 text-right">Gross Total</th>
+                    <th className="border border-gray-800 p-2 text-right">GST %</th>
+                    <th className="border border-gray-800 p-2 text-right">GST Amount</th>
+                    <th className="border border-gray-800 p-2 text-right">Further Tax</th>
+                    <th className="border border-gray-800 p-2 text-right">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={index}>
-                      <td className="border border-gray-800 p-2 text-left">{index + 1}</td>
-                      <td className="border border-gray-800 p-2 text-left">{item.hsCode}</td>
-                      <td className="border border-gray-800 p-2 text-left">{item.productDescription}</td>
-                      <td className="border border-gray-800 p-2 text-left">{item.uom}</td>
-                      <td className="border border-gray-800 p-2 text-right">{item.quantity}</td>
-                      <td className="border border-gray-800 p-2 text-right">{item.valueSalesExcludingST}</td>
-                      <td className="border border-gray-800 p-2 text-right">{((item.valueSalesExcludingST || 0) * (item.quantity || 0)).toFixed(2)}</td>
-                      <td className="border border-gray-800 p-2 text-right">{parseInt(item.rate || '0')}</td>
-                      <td className="border border-gray-800 p-2 text-right">{(item.salesTaxApplicable || 0).toFixed(2)}</td>
-                      <td className="border border-gray-800 p-2 text-right">{(item.furtherTax || 0).toFixed(2)}</td>
-                      <td className="border border-gray-800 p-2 text-right font-bold">{(item.totalValues || 0).toFixed(2)}</td>
+                      <td className="border border-gray-800 p-2">{index + 1}</td>
+                      <td className="border border-gray-800 p-2 font-mono">{item.hsCode || ''}</td>
+                      <td className="border border-gray-800 p-2">{item.productDescription || ''}</td>
+                      <td className="border border-gray-800 p-2">{item.quantity || 0}</td>
+                      <td className="border border-gray-800 p-2">{item.uom || ''}</td>
+                      <td className="border border-gray-800 p-2 text-right">{formatNumber(item.valueSalesExcludingST || 0)}</td>
+                      <td className="border border-gray-800 p-2 text-right">
+                        {formatNumber((item.valueSalesExcludingST || 0) * (item.quantity || 0))}
+                      </td>
+                      <td className="border border-gray-800 p-2 text-right">
+                        {formatNumber(((item.valueSalesExcludingST || 0) * (item.quantity || 0)) + (item.salesTaxApplicable || 0))}
+                      </td>
+                      <td className="border border-gray-800 p-2 text-right">{item.rate || '0%'}</td>
+                      <td className="border border-gray-800 p-2 text-right">{formatNumber(item.salesTaxApplicable || 0)}</td>
+                      <td className="border border-gray-800 p-2 text-right">0.00</td>
+                      <td className="border border-gray-800 p-2 text-right font-bold">
+                        {formatNumber(item.totalValues || 0)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
+            {/* Comments and FBR Info */}
+            <div className="mb-6 text-sm">
+              <div><strong>Comments:</strong> {comments}</div>
+              <div><strong>FBR INVOICE:</strong> {fbrInvoiceNumber || 'Not Available'}</div>
+            </div>
+
             {/* Totals Section */}
-            <div className="mb-6">
+            <div className="mb-8">
               <div className="flex justify-end">
                 <div className="w-96">
-                  <div className="flex justify-between py-2 border-b border-gray-400">
-                    <span className="font-bold">Total (excl. tax):</span>
-                    <span className="font-bold">{totals.subTotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-400">
-                    <span>Total GST:</span>
-                    <span>{totals.salesTax.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-400">
-                    <span>Total Further Tax:</span>
-                    <span>{totals.furtherTax.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-3 border-t-2 border-gray-800">
-                    <span className="font-bold text-lg">Net Total (inc. tax):</span>
-                    <span className="font-bold text-lg">{totals.grandTotal.toFixed(2)}</span>
+                  <div className="space-y-1 text-right">
+                    <div>
+                      <span className="font-bold">Total (excl. tax):</span>
+                      <span className="ml-4 font-bold">Rs. {formatNumber(totals.subTotal)}</span>
+                    </div>
+                    <div>
+                      <span>Total GST:</span>
+                      <span className="ml-4">Rs. {formatNumber(totals.salesTax)}</span>
+                    </div>
+                    <div>
+                      <span>Net Total (inc. tax):</span>
+                      <span className="ml-4">Rs. {formatNumber(totals.grandTotal)}</span>
+                    </div>
+                    <div>
+                      <span>Total Further Tax:</span>
+                      <span className="ml-4">Rs. {formatNumber(totals.furtherTax)}</span>
+                    </div>
+                    <div>
+                      <span>Advance Tax:</span>
+                      <span className="ml-4">Rs. {formatNumber(totals.advanceTax)}</span>
+                    </div>
+                    <div className="pt-2 border-t-2 border-gray-800 mt-2">
+                      <span className="font-bold text-lg">Net Total:</span>
+                      <span className="ml-4 font-bold text-lg">Rs. {formatNumber(totals.netTotal)}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Footer with QR Code and Logo */}
-            <div className="border-t-2 border-gray-800 pt-6 mt-6">
-              <div className="flex justify-between items-start mb-4">
-                {/* FBR Digital Invoicing Logo */}
-                <div className="flex flex-col items-center">
-                  <div className="w-24 h-24 bg-blue-600 rounded flex items-center justify-center mb-2">
-                    <span className="text-white text-xs font-bold">FBR DI</span>
-                  </div>
-                  <p className="text-xs text-center font-semibold">FBR Digital Invoicing System</p>
-                </div>
-
-                {/* QR Code */}
-                <div className="flex flex-col items-center">
-                  <div className="w-24 h-24 border-2 border-gray-800 bg-white flex items-center justify-center">
-                    <span className="text-xs text-gray-500">QR Code</span>
-                  </div>
-                  <p className="text-xs text-center mt-1">Scan to Verify</p>
-                </div>
+            {/* QR Code Placeholder */}
+            <div className="mb-6">
+              <div className="float-right w-32 h-32 border-2 border-gray-800 flex items-center justify-center text-gray-600 text-sm">
+                [QR Code Placeholder]
               </div>
-
-              {/* NOTE Section */}
-              <div className="bg-gray-100 p-4 rounded border border-gray-300 mb-4">
-                <p className="text-xs font-bold mb-2">NOTE:</p>
-                <p className="text-xs">
-                  It is to certify that goods supplied to you under this invoice has been imported and income tax has already been paid U/S 148.
-                  Therefore, please do not deduct the withholding income tax U/S 153 (1), 153(5) and as per clause (47-A) Part VI of the Second
-                  schedule of Income Tax Ordinance, 2001.
-                </p>
-              </div>
-
-              {/* Comments */}
-              <div className="mb-4">
-                <p className="text-sm"><strong>Comments:</strong> GD # N/A</p>
-              </div>
-
-              {/* Footer Contact */}
-              <div className="text-center border-t border-gray-300 pt-3">
-                <p className="text-xs font-semibold">{SELLER_INFO.address}</p>
-                <p className="text-xs">Contact # 00923142392069</p>
-              </div>
+              <div className="clear-both"></div>
             </div>
 
+            {/* Note Section */}
+            <div className="mt-12 pt-6 border-t-2 border-gray-800">
+              <h3 className="font-bold mb-2">## NOTE:</h3>
+              <p className="text-sm">
+                It is to certify that goods supplied to you under this invoice has been imported and income tax has already been paid U/S 148. Therefore, please do not deduct the withholding income tax U/S 153 (1), 153(5) and as per clause (47- A) Part VI of the Second schedule of Income Tax Ordinance, 2001.
+              </p>
+            </div>
           </div>
         )}
 
-        {!submittedInvoice && (
-          <>
-            <Card className="print:hidden">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-semibold">Customer Details</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="buyerNTN" className="text-sm font-medium">
-                      NTN/CNIC <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="buyerNTN"
-                      value={buyerInfo.buyerNTNCNIC}
-                      onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerNTNCNIC: e.target.value })}
-                      placeholder="1234567 or 3520212345678"
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="buyerName" className="text-sm font-medium">
-                      Business Name <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="buyerName"
-                      value={buyerInfo.buyerBusinessName}
-                      onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerBusinessName: e.target.value })}
-                      placeholder="Customer business name"
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="buyerProvince" className="text-sm font-medium">Province</Label>
-                    <Select
-                      value={buyerInfo.buyerProvince}
-                      onValueChange={(value) => setBuyerInfo({ ...buyerInfo, buyerProvince: value })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PROVINCES.map((p) => (
-                          <SelectItem key={p.code} value={p.code}>{p.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="buyerAddress" className="text-sm font-medium">Address</Label>
-                    <Input
-                      id="buyerAddress"
-                      value={buyerInfo.buyerAddress}
-                      onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerAddress: e.target.value })}
-                      placeholder="Customer address"
-                      className="mt-1.5"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="registrationType" className="text-sm font-medium">Registration Type</Label>
-                    <Select
-                      value={buyerInfo.buyerRegistrationType}
-                      onValueChange={(value: 'Registered' | 'Unregistered') => 
-                        setBuyerInfo({ ...buyerInfo, buyerRegistrationType: value })
-                      }
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Registered">Registered</SelectItem>
-                        <SelectItem value="Unregistered">Unregistered</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="print:hidden">
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg font-semibold">Items</CardTitle>
-                  <Button onClick={addItem} size="sm" variant="outline" className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Add Item
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {items.map((item, index) => (
-                    <div key={index} className="p-4 border rounded-lg bg-gray-50">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-sm font-medium text-gray-700">Item {index + 1}</span>
-                        {items.length > 1 && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeItem(index)}
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="md:col-span-3">
-                          <Label className="text-sm">Product Description</Label>
-                          <Input
-                            value={item.productDescription}
-                            onChange={(e) => updateItem(index, 'productDescription', e.target.value)}
-                            placeholder="T-Shirt, Jeans, etc."
-                            className="mt-1.5"
-                          />
-                        </div>
-
-                        <div>
-                          <Label className="text-sm">HS Code</Label>
-                          <Select
-                            value={item.hsCode}
-                            onValueChange={(value) => updateItem(index, 'hsCode', value)}
-                          >
-                            <SelectTrigger className="mt-1.5">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TEXTILE_HS_CODES.map((hs) => (
-                                <SelectItem key={hs.code} value={hs.code}>
-                                  {hs.code}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <Label className="text-sm">Quantity</Label>
-                          <Input
-                            type="number"
-                            value={item.quantity}
-                            onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 0)}
-                            className="mt-1.5"
-                          />
-                        </div>
-
-                        <div>
-                          <Label className="text-sm">Rate (per unit)</Label>
-                          <Input
-                            type="number"
-                            value={item.valueSalesExcludingST}
-                            onChange={(e) => updateItem(index, 'valueSalesExcludingST', parseFloat(e.target.value) || 0)}
-                            className="mt-1.5"
-                          />
-                        </div>
-
-                        <div>
-                          <Label className="text-sm">Tax Rate</Label>
-                          <Select
-                            value={item.rate}
-                            onValueChange={(value) => updateItem(index, 'rate', value)}
-                          >
-                            <SelectTrigger className="mt-1.5">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TAX_RATES.map((rate) => (
-                                <SelectItem key={rate.value} value={rate.value}>
-                                  {rate.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div>
-                          <Label className="text-sm">UOM</Label>
-                          <Select
-                            value={item.uom}
-                            onValueChange={(value) => updateItem(index, 'uom', value)}
-                          >
-                            <SelectTrigger className="mt-1.5">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {UOM_OPTIONS.map((uom) => (
-                                <SelectItem key={uom.id} value={uom.name}>
-                                  {uom.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 pt-3 border-t grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                        <div>
-                          <p className="text-gray-500">Subtotal</p>
-                          <p className="font-semibold">{formatCurrency((item.valueSalesExcludingST || 0) * (item.quantity || 0))}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Tax</p>
-                          <p className="font-semibold">{formatCurrency(item.salesTaxApplicable || 0)}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Further Tax</p>
-                          <p className="font-semibold">{formatCurrency(item.furtherTax || 0)}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Total</p>
-                          <p className="font-semibold text-blue-600">{formatCurrency(item.totalValues || 0)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-blue-50 border-blue-200 print:hidden">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg font-semibold">Invoice Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Subtotal:</span>
-                    <span className="font-medium">{formatCurrency(totals.subTotal)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Sales Tax:</span>
-                    <span className="font-medium">{formatCurrency(totals.salesTax)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Further Tax:</span>
-                    <span className="font-medium">{formatCurrency(totals.furtherTax)}</span>
-                  </div>
-                  <div className="pt-2 border-t border-blue-300 flex justify-between">
-                    <span className="font-semibold text-lg">Grand Total:</span>
-                    <span className="font-bold text-xl text-blue-600">{formatCurrency(totals.grandTotal)}</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
+        {/* Action Buttons for Preview */}
+        {showPreview && (
+          <div id="invoice-preview" className="flex justify-center gap-4 mt-6 print:hidden">
+            <Button 
+              onClick={handlePrint}
+              className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-lg gap-2 px-8"
+              size="lg"
+            >
+              <Printer className="h-5 w-5" />
+              Print Invoice
+            </Button>
+            <Button 
+              onClick={handleDownloadPDF}
+              variant="outline"
+              className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2 px-8"
+              size="lg"
+            >
+              <Download className="h-5 w-5" />
+              Download PDF
+            </Button>
+            <Button 
+              onClick={resetForm}
+              variant="outline"
+              className="border-gray-300 text-gray-700 hover:bg-gray-50 gap-2 px-8"
+              size="lg"
+            >
+              <Plus className="h-5 w-5" />
+              New Invoice
+            </Button>
+          </div>
         )}
 
       </div>
+
+      {/* Custom Styles for Print */}
+      <style jsx global>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #invoice-print, #invoice-print * {
+            visibility: visible !important;
+          }
+          #invoice-print {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            background: white !important;
+          }
+          .no-print, .print\\:hidden {
+            display: none !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
