@@ -4,7 +4,7 @@ export interface InvoiceItem {
   id?: string;
   hsCode: string;
   productDescription: string;
-  rate: string;
+  rate: string; // Tax rate as percentage string (e.g., "18%")
   uom: string;
   quantity: number;
   totalValues: number;
@@ -34,7 +34,7 @@ export interface FBRInvoice {
   buyerAddress: string;
   buyerRegistrationType: 'Registered' | 'Unregistered';
   invoiceRefNo?: string;
-  scenarioId?: string;
+  scenarioId?: string; // For sandbox testing (SN001-SN028)
   items: InvoiceItem[];
 }
 
@@ -81,3 +81,35 @@ export interface LocalInvoiceItem {
   rate: number;
   amount: number;
 }
+
+// FBR Reference Data Types
+export interface Province {
+  stateProvinceCode: number;
+  stateProvinceDesc: string;
+}
+
+export interface UOMType {
+  id: number;
+  name: string;
+}
+
+export interface HSCode {
+  code: string;
+  description: string;
+}
+
+export interface TaxRate {
+  saleTypeId: number;
+  saleType: string;
+  rate: number;
+}
+
+// FBR Error Codes
+export interface FBRError {
+  code: string;
+  message: string;
+  description: string;
+}
+
+// API Mode
+export type APIMode = 'sandbox' | 'production';

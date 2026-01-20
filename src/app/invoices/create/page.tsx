@@ -1,56 +1,42 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
-  Plus, 
-  Trash2, 
-  Send, 
-  CheckCircle, 
-  Upload, 
-  FileSpreadsheet, 
-  X, 
-  Printer, 
-  Download, 
-  CheckCheck,
-  FileText,
-  Building2,
-  User,
-  MapPin,
-  Phone,
-  Mail,
-  Shield,
-  AlertCircle,
-  Calculator,
-  Package,
-  Percent,
-  Hash,
-  ArrowLeft,
-  Save,
-  Copy,
-  Eye,
-  EyeOff,
-  Calendar,
-  CreditCard,
-  BarChart3,
-  TrendingUp,
-  Receipt,
-  QrCode,
-  ScanLine
+  Plus, Trash2, Send, CheckCircle, Upload, FileSpreadsheet, X, Printer, Download,
+  CheckCheck, Building2, User, Calculator, Package, Hash, ArrowLeft, Save, Copy,
+  Eye, Calendar, CreditCard, Receipt, AlertCircle, Settings, Zap, Shield
 } from 'lucide-react';
-import { PROVINCES, TAX_RATES, TEXTILE_HS_CODES, UOM_OPTIONS, SELLER_INFO } from '@/constants/fbr';
+import { 
+  PROVINCES, TAX_RATES, TEXTILE_HS_CODES, UOM_OPTIONS, SELLER_INFO, 
+  INVOICE_TYPES, FBR_SCENARIOS, FBR_ERROR_CODES, REGISTRATION_TYPES
+} from '@/constants/fbr';
 import { calculateInvoiceItemTotals, calculateInvoiceTotals } from '@/lib/calculations';
 import { formatCurrency, formatNumber, formatDate, formatInvoiceDate, formatTime } from '@/lib/utils';
-import { InvoiceItem, FBRInvoice } from '@/types/invoice';
+import { InvoiceItem, FBRInvoice, APIMode } from '@/types/invoice';
 import { useFBRInvoice } from '@/hooks/useFBRInvoice';
+import { FBRApiService } from '@/services/fbr-api';
+import QRCode from 'qrcode';
 
 export default function CreateFBRInvoice() {
   const { postInvoice, validateInvoice, loading, error } = useFBRInvoice();
 
+  // API Mode State
+  const [apiMode, setApiMode] = useState<APIMode>('sandbox');
+  const [isDemoMode, setIsDemoMode] = useState(true);
+
+  // Invoice Settings
+  const [invoiceType, setInvoiceType] = useState<'Sale Invoice' | 'Debit Note'>('Sale Invoice');
+  const [scenarioId, setScenarioId] = useState('SN001');
+  const [invoiceDate, setInvoiceDate] = useState(formatDate(new Date()));
+  const [invoiceTime] = useState(formatTime(new Date()));
+  const [localInvoiceNumber] = useState(`INV${Date.now().toString().slice(-6)}`);
+
+  // Buyer Information
   const [buyerInfo, setBuyerInfo] = useState({
     buyerNTNCNIC: '3281099',
     buyerBusinessName: 'M/S EVERNEW TECHNOLOGIES',
@@ -61,6 +47,7 @@ export default function CreateFBRInvoice() {
     buyerEmail: ''
   });
 
+  // Items State
   const [items, setItems] = useState<Partial<InvoiceItem>[]>([
     {
       hsCode: '8471.3010',
@@ -70,47 +57,117 @@ export default function CreateFBRInvoice() {
       quantity: 435,
       valueSalesExcludingST: 5586.95,
       fixedNotifiedValueOrRetailPrice: 0,
-      salesTaxApplicable: 243032.33,
+      salesTaxApplicable: 0,
       salesTaxWithheldAtSource: 0,
       extraTax: 0,
       furtherTax: 0,
       sroScheduleNo: '',
-      fedPayable: 13366.78, // Advance Tax
+      fedPayable: 0,
       discount: 0,
       saleType: 'Goods at standard rate (default)',
       sroItemSerialNo: '',
-      totalValues: 2686722.36 // Net Total
+      totalValues: 0
     }
   ]);
 
+  // UI State
   const [showExcelImport, setShowExcelImport] = useState(false);
   const [submittedInvoice, setSubmittedInvoice] = useState<any>(null);
   const [fbrInvoiceNumber, setFbrInvoiceNumber] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
-  const [invoiceDate, setInvoiceDate] = useState('2025-12-23');
-  const [invoiceTime] = useState('21:16:20');
-  const [user] = useState('manager');
-  const [comments, setComments] = useState('GD # 34845');
   const [showForm, setShowForm] = useState(true);
+  const [comments, setComments] = useState('GD # 34845');
+  const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
+  const [showSettings, setShowSettings] = useState(false);
 
-  // Generate invoice number
-  const [localInvoiceNumber] = useState('INV000025');
+  // Reference Data from FBR API
+  const [provinces, setProvinces] = useState(PROVINCES);
+  const [uomList, setUomList] = useState(UOM_OPTIONS);
+  const [hsCodeList, setHsCodeList] = useState(TEXTILE_HS_CODES);
+
+  // Check demo mode on mount
+  useEffect(() => {
+    const checkMode = async () => {
+      const demoMode = FBRApiService.isDemoMode();
+      const currentMode = FBRApiService.getCurrentMode();
+      setIsDemoMode(demoMode);
+      setApiMode(currentMode);
+    };
+    checkMode();
+  }, []);
+
+  // Fetch reference data from FBR on mount
+  useEffect(() => {
+    const fetchReferenceData = async () => {
+      try {
+        const [provincesData, uomData] = await Promise.all([
+          FBRApiService.getProvinces(),
+          FBRApiService.getUOM()
+        ]);
+        
+        if (provincesData && provincesData.length > 0) {
+          const formattedProvinces = provincesData.map((p: any) => ({
+            code: p.stateProvinceDesc,
+            name: p.stateProvinceDesc
+          }));
+          setProvinces(formattedProvinces);
+        }
+        
+        if (uomData && uomData.length > 0) {
+          setUomList(uomData);
+        }
+      } catch (error) {
+        console.error('Error fetching reference data:', error);
+      }
+    };
+
+    if (!isDemoMode) {
+      fetchReferenceData();
+    }
+  }, [isDemoMode]);
+
+  // Recalculate items when buyer registration type changes
+  useEffect(() => {
+    const isRegistered = buyerInfo.buyerRegistrationType === 'Registered';
+    const recalculatedItems = items.map(item => 
+      calculateInvoiceItemTotals(item, isRegistered)
+    );
+    setItems(recalculatedItems);
+  }, [buyerInfo.buyerRegistrationType]);
 
   // Calculate totals
-  const totals = {
-    subTotal: 2430323.25,
-    salesTax: 243032.33,
-    furtherTax: 0,
-    advanceTax: 13366.78,
-    grandTotal: 2673355.58,
-    netTotal: 2686722.36
+  const totals = calculateInvoiceTotals(items as InvoiceItem[]);
+
+  // Generate QR Code
+  const generateQRCode = async (invoiceNumber: string) => {
+    try {
+      const qrData = JSON.stringify({
+        invoiceNumber: invoiceNumber,
+        sellerNTN: SELLER_INFO.ntn,
+        buyerNTN: buyerInfo.buyerNTNCNIC,
+        total: totals.netTotal,
+        date: invoiceDate
+      });
+      
+      const qrUrl = await QRCode.toDataURL(qrData, {
+        width: 200,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+        version: 2
+      });
+      
+      setQrCodeUrl(qrUrl);
+    } catch (error) {
+      console.error('Error generating QR code:', error);
+    }
   };
 
+  // Add new item
   const addItem = () => {
     const newItem: Partial<InvoiceItem> = {
       hsCode: '8471.3010',
       productDescription: '',
-      rate: '10%',
+      rate: '18%',
       uom: 'Numbers, pieces, units',
       quantity: 1,
       valueSalesExcludingST: 0,
@@ -129,77 +186,53 @@ export default function CreateFBRInvoice() {
     setItems([...items, newItem]);
   };
 
+  // Remove item
   const removeItem = (index: number) => {
     if (items.length > 1) {
       setItems(items.filter((_, i) => i !== index));
     }
   };
 
+  // Update item with auto-calculation
   const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
     const newItems = [...items];
     newItems[index] = { ...newItems[index], [field]: value };
     
-    // Recalculate totals based on new values
-    const quantity = newItems[index].quantity || 0;
-    const rate = newItems[index].valueSalesExcludingST || 0;
-    const taxRate = parseInt(newItems[index].rate || '10') / 100;
-    
-    const subtotal = quantity * rate;
-    const salesTax = subtotal * taxRate;
-    const advanceTax = salesTax * 0.055; // 5.5% advance tax
-    const grandTotal = subtotal + salesTax;
-    const netTotal = grandTotal + advanceTax;
-    
-    newItems[index] = {
-      ...newItems[index],
-      salesTaxApplicable: salesTax,
-      fedPayable: advanceTax,
-      totalValues: netTotal
-    };
+    // Recalculate this item's totals
+    const isRegistered = buyerInfo.buyerRegistrationType === 'Registered';
+    newItems[index] = calculateInvoiceItemTotals(newItems[index], isRegistered);
     
     setItems(newItems);
   };
 
+  // Toggle API Mode
+  const toggleApiMode = () => {
+    const newMode: APIMode = apiMode === 'sandbox' ? 'production' : 'sandbox';
+    setApiMode(newMode);
+    
+    // Show warning for production mode
+    if (newMode === 'production') {
+      if (!confirm('⚠️ WARNING: You are switching to PRODUCTION mode.\n\nInvoices will be submitted to FBR live system.\n\nAre you sure?')) {
+        return;
+      }
+    }
+  };
+
+  // Handle Excel Import
   const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
-      // Simulate Excel import
-      const importedItems: Partial<InvoiceItem>[] = [
-        {
-          hsCode: '8471.3010',
-          productDescription: 'USED CHROMEBOOK WITH ADAPTOR CHARGER',
-          rate: '10%',
-          uom: 'Numbers, pieces, units',
-          quantity: 435,
-          valueSalesExcludingST: 5586.95,
-          fixedNotifiedValueOrRetailPrice: 0,
-          salesTaxApplicable: 243032.33,
-          salesTaxWithheldAtSource: 0,
-          extraTax: 0,
-          furtherTax: 0,
-          sroScheduleNo: '',
-          fedPayable: 13366.78,
-          discount: 0,
-          saleType: 'Goods at standard rate (default)',
-          sroItemSerialNo: '',
-          totalValues: 2686722.36
-        }
-      ];
-
-      setItems(importedItems);
+      // TODO: Implement actual Excel parsing
+      alert('Excel import feature coming soon!');
       setShowExcelImport(false);
-      
-      setTimeout(() => {
-        alert(`✅ 1 item imported successfully from Excel!`);
-      }, 300);
-      
     } catch (error) {
       alert('❌ Error reading Excel file. Please check the format.');
     }
   };
 
+  // Validate Invoice
   const handleValidate = async () => {
     if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
       alert('❌ Please fill all required buyer information!');
@@ -207,18 +240,18 @@ export default function CreateFBRInvoice() {
     }
 
     const fbrInvoice: FBRInvoice = {
-      invoiceType: 'Sale Invoice',
+      invoiceType: invoiceType,
       invoiceDate: invoiceDate,
-      sellerNTNCNIC: 'A081797-5',
-      sellerBusinessName: 'MM ENTERPRISES',
-      sellerProvince: 'SINIDH',
-      sellerAddress: 'SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN',
+      sellerNTNCNIC: SELLER_INFO.ntn,
+      sellerBusinessName: SELLER_INFO.businessName,
+      sellerProvince: SELLER_INFO.province,
+      sellerAddress: SELLER_INFO.address,
       buyerNTNCNIC: buyerInfo.buyerNTNCNIC,
       buyerBusinessName: buyerInfo.buyerBusinessName,
       buyerProvince: buyerInfo.buyerProvince,
       buyerAddress: buyerInfo.buyerAddress,
       buyerRegistrationType: buyerInfo.buyerRegistrationType,
-      scenarioId: 'SN001',
+      scenarioId: apiMode === 'sandbox' ? scenarioId : undefined,
       items: items as InvoiceItem[]
     };
 
@@ -227,10 +260,70 @@ export default function CreateFBRInvoice() {
     if (isValid) {
       alert('✅ Invoice is valid and ready for submission to FBR!');
     } else {
-      alert(`❌ Validation failed: ${error || 'Please check all fields'}`);
+      alert(`❌ Validation failed:\n\n${error || 'Please check all fields'}`);
     }
   };
 
+  // Submit Invoice
+  const handleSubmit = async () => {
+    if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
+      alert('❌ Please fill all required buyer information!');
+      return;
+    }
+
+    const fbrInvoice: FBRInvoice = {
+      invoiceType: invoiceType,
+      invoiceDate: invoiceDate,
+      sellerNTNCNIC: SELLER_INFO.ntn,
+      sellerBusinessName: SELLER_INFO.businessName,
+      sellerProvince: SELLER_INFO.province,
+      sellerAddress: SELLER_INFO.address,
+      buyerNTNCNIC: buyerInfo.buyerNTNCNIC,
+      buyerBusinessName: buyerInfo.buyerBusinessName,
+      buyerProvince: buyerInfo.buyerProvince,
+      buyerAddress: buyerInfo.buyerAddress,
+      buyerRegistrationType: buyerInfo.buyerRegistrationType,
+      scenarioId: apiMode === 'sandbox' ? scenarioId : undefined,
+      items: items as InvoiceItem[]
+    };
+
+    const response = await postInvoice(fbrInvoice);
+    
+    if (response) {
+      const fbrNumber = response.invoiceNumber || `FBR-${Date.now().toString().slice(-8)}`;
+      
+      const savedInvoice = {
+        ...fbrInvoice,
+        localInvoiceNumber,
+        fbrInvoiceNumber: fbrNumber,
+        invoiceDate: invoiceDate,
+        totals,
+        status: 'Submitted'
+      };
+      
+      setSubmittedInvoice(savedInvoice);
+      setFbrInvoiceNumber(fbrNumber);
+      setShowForm(false);
+      setShowPreview(true);
+      
+      // Generate QR Code
+      await generateQRCode(fbrNumber);
+      
+      // Scroll to preview
+      setTimeout(() => {
+        const invoicePreview = document.getElementById('invoice-preview');
+        if (invoicePreview) {
+          invoicePreview.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 100);
+      
+      alert(`🎉 Invoice submitted successfully!\n\n📄 FBR Invoice: ${fbrNumber}`);
+    } else {
+      alert(`❌ Submission failed:\n\n${error || 'Please try again'}`);
+    }
+  };
+
+  // Preview Handler
   const handlePreview = () => {
     if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
       alert('❌ Please fill all required buyer information before preview!');
@@ -240,244 +333,27 @@ export default function CreateFBRInvoice() {
     setShowForm(!showPreview);
   };
 
-  const handleSubmit = async () => {
-    if (!buyerInfo.buyerBusinessName || !buyerInfo.buyerNTNCNIC) {
-      alert('❌ Please fill all required buyer information!');
-      return;
-    }
-
-    const fbrInvoice: FBRInvoice = {
-      invoiceType: 'Sale Invoice',
-      invoiceDate: invoiceDate,
-      sellerNTNCNIC: 'A081797-5',
-      sellerBusinessName: 'MM ENTERPRISES',
-      sellerProvince: 'SINIDH',
-      sellerAddress: 'SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN',
-      buyerNTNCNIC: buyerInfo.buyerNTNCNIC,
-      buyerBusinessName: buyerInfo.buyerBusinessName,
-      buyerProvince: buyerInfo.buyerProvince,
-      buyerAddress: buyerInfo.buyerAddress,
-      buyerRegistrationType: buyerInfo.buyerRegistrationType,
-      scenarioId: 'SN001',
-      items: items as InvoiceItem[]
-    };
-
-    const response = await postInvoice(fbrInvoice);
-    
-    if (response) {
-      const savedInvoice = {
-        ...fbrInvoice,
-        localInvoiceNumber,
-        fbrInvoiceNumber: response.invoiceNumber || `FBR-${Date.now().toString().slice(-8)}`,
-        invoiceDate: invoiceDate,
-        totals,
-        status: 'Submitted'
-      };
-      
-      setSubmittedInvoice(savedInvoice);
-      setFbrInvoiceNumber(response.invoiceNumber || savedInvoice.fbrInvoiceNumber);
-      setShowForm(false);
-      setShowPreview(true);
-      
-      // Safely scroll to preview
-      setTimeout(() => {
-        const invoicePreview = document.getElementById('invoice-preview');
-        if (invoicePreview) {
-          invoicePreview.scrollIntoView({ behavior: 'smooth' });
-        }
-      }, 100);
-      
-      alert(`🎉 Invoice submitted successfully!\n\n📄 FBR Invoice: ${savedInvoice.fbrInvoiceNumber}`);
-    } else {
-      alert(`❌ Submission failed: ${error || 'Please try again'}`);
-    }
-  };
-
+  // Print Handler
   const handlePrint = () => {
-    const printContent = document.getElementById('invoice-print');
-    if (!printContent) {
-      alert('Invoice preview not found! Please generate invoice first.');
-      return;
-    }
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Please allow popups to print invoice');
-      return;
-    }
-
-    // Safely access innerHTML
-    const invoiceContent = printContent.innerHTML || '';
-    
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Invoice ${localInvoiceNumber}</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 0;
-            }
-            body {
-              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-              margin: 0;
-              padding: 0;
-              background: white;
-              color: black;
-              width: 210mm;
-              min-height: 297mm;
-              padding: 10mm;
-            }
-            .invoice-container {
-              width: 100%;
-              border: 1px solid #000;
-              padding: 15px;
-            }
-            .header {
-              text-align: center;
-              margin-bottom: 20px;
-            }
-            .invoice-info {
-              font-size: 12px;
-              margin-bottom: 20px;
-              border-bottom: 1px solid #000;
-              padding-bottom: 10px;
-            }
-            .invoice-title {
-              font-size: 24px;
-              font-weight: bold;
-              margin: 10px 0;
-              text-decoration: underline;
-            }
-            .details-container {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 20px;
-            }
-            .buyer-details, .seller-details {
-              width: 48%;
-              border: 1px solid #000;
-              padding: 10px;
-              font-size: 11px;
-            }
-            .section-title {
-              font-weight: bold;
-              font-size: 12px;
-              margin-bottom: 5px;
-              text-decoration: underline;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin: 20px 0;
-              font-size: 11px;
-            }
-            th, td {
-              border: 1px solid #000;
-              padding: 6px 4px;
-              text-align: left;
-            }
-            th {
-              background-color: #f0f0f0;
-              font-weight: bold;
-            }
-            .numeric {
-              text-align: right;
-            }
-            .totals {
-              float: right;
-              width: 300px;
-              margin-top: 20px;
-            }
-            .total-row {
-              display: flex;
-              justify-content: space-between;
-              padding: 4px 0;
-              border-bottom: 1px solid #ddd;
-            }
-            .total-row.final {
-              font-weight: bold;
-              border-top: 2px solid #000;
-              padding-top: 8px;
-              margin-top: 8px;
-            }
-            .note {
-              margin-top: 40px;
-              padding: 10px;
-              border: 1px solid #000;
-              font-size: 10px;
-              background-color: #f9f9f9;
-            }
-            .footer {
-              margin-top: 30px;
-              text-align: center;
-              font-size: 10px;
-              border-top: 1px solid #000;
-              padding-top: 10px;
-            }
-            .qr-placeholder {
-              width: 80px;
-              height: 80px;
-              border: 1px dashed #000;
-              float: right;
-              text-align: center;
-              line-height: 80px;
-              font-size: 10px;
-              color: #666;
-            }
-            .comments {
-              font-size: 11px;
-              margin: 10px 0;
-            }
-            @media print {
-              body {
-                width: 210mm;
-                height: 297mm;
-              }
-              .no-print {
-                display: none !important;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          ${invoiceContent}
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() {
-                if (window && !window.closed) {
-                  window.close();
-                }
-              }, 1000);
-            }
-          </script>
-        </body>
-      </html>
-    `);
-    
-    // Ensure document is closed properly
-    try {
-      printWindow.document.close();
-    } catch (error) {
-      console.error('Error closing print window:', error);
-    }
+    window.print();
   };
 
+  // Download PDF Handler
   const handleDownloadPDF = () => {
     alert('📄 PDF download feature will be available soon! Use Print button for now.');
   };
 
+  // Reset Form
   const resetForm = () => {
     setSubmittedInvoice(null);
     setFbrInvoiceNumber(null);
     setShowPreview(false);
     setShowForm(true);
+    setQrCodeUrl('');
     setBuyerInfo({
       buyerNTNCNIC: '',
       buyerBusinessName: '',
-      buyerProvince: 'Sindh',
+      buyerProvince: 'SINIDH',
       buyerAddress: '',
       buyerRegistrationType: 'Registered',
       buyerPhone: '',
@@ -486,7 +362,7 @@ export default function CreateFBRInvoice() {
     setItems([{
       hsCode: '8471.3010',
       productDescription: '',
-      rate: '10%',
+      rate: '18%',
       uom: 'Numbers, pieces, units',
       quantity: 1,
       valueSalesExcludingST: 0,
@@ -506,6 +382,7 @@ export default function CreateFBRInvoice() {
     setComments('');
   };
 
+  // Copy to Clipboard
   const copyToClipboard = (text: string) => {
     if (!text) {
       alert('No text to copy!');
@@ -538,13 +415,23 @@ export default function CreateFBRInvoice() {
                 </div>
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-bold mb-2">FBR Digital Invoice</h1>
-                  <p className="text-blue-100 text-sm sm:text-base">
-                    Create invoice in exact PDF format
+                  <p className="text-blue-100 text-sm sm:text-base flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    {isDemoMode ? 'Demo Mode - No Real API Calls' : `${apiMode.toUpperCase()} Mode`}
                   </p>
                 </div>
               </div>
               
               <div className="flex flex-wrap gap-3">
+                <Button 
+                  onClick={() => setShowSettings(!showSettings)}
+                  variant="outline" 
+                  size="sm"
+                  className="bg-white/10 hover:bg-white/20 border-white/30 text-white backdrop-blur-sm"
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  Settings
+                </Button>
                 {showForm && (
                   <>
                     <Button 
@@ -590,6 +477,76 @@ export default function CreateFBRInvoice() {
               </div>
             </div>
 
+            {/* Settings Panel */}
+            {showSettings && (
+              <div className="mt-6 p-6 bg-white/10 backdrop-blur-sm rounded-xl border border-white/20">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  Invoice Settings
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label className="text-white mb-2 block">Invoice Type</Label>
+                    <Select value={invoiceType} onValueChange={(value: any) => setInvoiceType(value)}>
+                      <SelectTrigger className="bg-white/20 border-white/30 text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {INVOICE_TYPES.map(type => (
+                          <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div>
+                    <Label className="text-white mb-2 block flex items-center gap-2">
+                      API Mode 
+                      {!isDemoMode && (
+                        <button
+                          onClick={toggleApiMode}
+                          className="text-xs bg-white/20 px-2 py-1 rounded hover:bg-white/30"
+                        >
+                          Switch
+                        </button>
+                      )}
+                    </Label>
+                    <div className="bg-white/20 border border-white/30 rounded-md px-3 py-2 text-white flex items-center gap-2">
+                      <Zap className={`h-4 w-4 ${apiMode === 'production' ? 'text-red-400' : 'text-green-400'}`} />
+                      {isDemoMode ? 'DEMO' : apiMode.toUpperCase()}
+                    </div>
+                  </div>
+                  
+                  {apiMode === 'sandbox' && !isDemoMode && (
+                    <div>
+                      <Label className="text-white mb-2 block">Scenario ID (Testing)</Label>
+                      <Select value={scenarioId} onValueChange={setScenarioId}>
+                        <SelectTrigger className="bg-white/20 border-white/30 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-60">
+                          {FBR_SCENARIOS.map(scenario => (
+                            <SelectItem key={scenario.id} value={scenario.id}>
+                              {scenario.id} - {scenario.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+                
+                {isDemoMode && (
+                  <div className="mt-4 p-3 bg-yellow-500/20 border border-yellow-400/30 rounded-lg">
+                    <p className="text-sm text-yellow-100 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <strong>Demo Mode:</strong> No real FBR API calls. Set FBR_API_TOKEN in .env.local to use real APIs.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Invoice Info Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-8 border-t border-white/20">
               <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
@@ -633,7 +590,7 @@ export default function CreateFBRInvoice() {
               <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-blue-100">Grand Total</p>
+                    <p className="text-sm text-blue-100">Net Total</p>
                     <p className="text-xl font-bold mt-1">Rs. {formatNumber(totals.netTotal)}</p>
                   </div>
                   <div className="bg-amber-500/20 p-2 rounded-lg">
@@ -709,6 +666,8 @@ export default function CreateFBRInvoice() {
           </div>
         )}
 
+        {/* Continue with Form in Part 3... */}
+
         {/* Excel Import Modal */}
         {showExcelImport && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -752,20 +711,24 @@ export default function CreateFBRInvoice() {
                     <h4 className="font-medium text-blue-900 mb-2 text-sm">📋 Required Excel Format:</h4>
                     <div className="text-sm text-blue-800 space-y-1">
                       <div className="flex items-center gap-2">
-                        <div className="w-20 font-medium">Column A:</div>
+                        <div className="w-24 font-medium">Column A:</div>
+                        <div>HS Code</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 font-medium">Column B:</div>
                         <div>Product Description</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="w-20 font-medium">Column B:</div>
+                        <div className="w-24 font-medium">Column C:</div>
                         <div>Quantity</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="w-20 font-medium">Column C:</div>
+                        <div className="w-24 font-medium">Column D:</div>
                         <div>Rate per unit</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="w-20 font-medium">Column D:</div>
-                        <div>HS Code (optional)</div>
+                        <div className="w-24 font-medium">Column E:</div>
+                        <div>Tax Rate (%)</div>
                       </div>
                     </div>
                   </div>
@@ -811,11 +774,20 @@ export default function CreateFBRInvoice() {
                     </div>
                     
                     <div className="space-y-2">
-                      <Label className="text-sm font-semibold">GSTN #</Label>
-                      <Input
-                        placeholder="GSTN Number"
-                        className="focus:ring-2 focus:ring-blue-500"
-                      />
+                      <Label className="text-sm font-semibold">Registration Type *</Label>
+                      <Select
+                        value={buyerInfo.buyerRegistrationType}
+                        onValueChange={(value: any) => setBuyerInfo({ ...buyerInfo, buyerRegistrationType: value })}
+                      >
+                        <SelectTrigger className="focus:ring-2 focus:ring-blue-500">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {REGISTRATION_TYPES.map(type => (
+                            <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     
                     <div className="space-y-2">
@@ -823,23 +795,23 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={buyerInfo.buyerPhone}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerPhone: e.target.value })}
-                        placeholder="Phone number"
+                        placeholder="03001234567"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
                     
                     <div className="md:col-span-2 space-y-2">
-                      <Label className="text-sm font-semibold">Address</Label>
+                      <Label className="text-sm font-semibold">Address *</Label>
                       <Input
                         value={buyerInfo.buyerAddress}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerAddress: e.target.value })}
-                        placeholder="Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South"
+                        placeholder="Complete address"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
                     
                     <div className="space-y-2">
-                      <Label className="text-sm font-semibold">Province</Label>
+                      <Label className="text-sm font-semibold">Province *</Label>
                       <Select
                         value={buyerInfo.buyerProvince}
                         onValueChange={(value) => setBuyerInfo({ ...buyerInfo, buyerProvince: value })}
@@ -848,10 +820,11 @@ export default function CreateFBRInvoice() {
                           <SelectValue placeholder="Select province" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="SINIDH">SINIDH</SelectItem>
-                          <SelectItem value="Punjab">Punjab</SelectItem>
-                          <SelectItem value="KPK">KPK</SelectItem>
-                          <SelectItem value="Balochistan">Balochistan</SelectItem>
+                          {provinces.map(province => (
+                            <SelectItem key={province.code} value={province.code}>
+                              {province.name}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -922,21 +895,30 @@ export default function CreateFBRInvoice() {
                         <div className="space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">HS Code</Label>
-                              <Input
+                              <Label className="text-sm font-semibold">HS Code *</Label>
+                              <Select
                                 value={item.hsCode}
-                                onChange={(e) => updateItem(index, 'hsCode', e.target.value)}
-                                placeholder="8471.3010"
-                                className="bg-white"
-                              />
+                                onValueChange={(value) => updateItem(index, 'hsCode', value)}
+                              >
+                                <SelectTrigger className="bg-white">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {hsCodeList.map(hs => (
+                                    <SelectItem key={hs.code} value={hs.code}>
+                                      {hs.code} - {hs.description}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </div>
                             
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">Product Description</Label>
+                              <Label className="text-sm font-semibold">Product Description *</Label>
                               <Input
                                 value={item.productDescription}
                                 onChange={(e) => updateItem(index, 'productDescription', e.target.value)}
-                                placeholder="USED CHROMEBOOK WITH ADAPTOR CHARGER"
+                                placeholder="Product description"
                                 className="bg-white"
                               />
                             </div>
@@ -944,7 +926,7 @@ export default function CreateFBRInvoice() {
                           
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">Quantity</Label>
+                              <Label className="text-sm font-semibold">Quantity *</Label>
                               <Input
                                 type="number"
                                 min="1"
@@ -955,25 +937,26 @@ export default function CreateFBRInvoice() {
                             </div>
                             
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">UOM</Label>
+                              <Label className="text-sm font-semibold">UOM *</Label>
                               <Select
                                 value={item.uom}
                                 onValueChange={(value) => updateItem(index, 'uom', value)}
                               >
                                 <SelectTrigger className="bg-white">
-                                  <SelectValue placeholder="Select UOM" />
+                                  <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="Numbers, pieces, units">Numbers, pieces, units</SelectItem>
-                                  <SelectItem value="Kilograms">Kilograms</SelectItem>
-                                  <SelectItem value="Meters">Meters</SelectItem>
-                                  <SelectItem value="Litres">Litres</SelectItem>
+                                  {uomList.map(uom => (
+                                    <SelectItem key={uom.id} value={uom.name}>
+                                      {uom.name}
+                                    </SelectItem>
+                                  ))}
                                 </SelectContent>
                               </Select>
                             </div>
                             
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">Rate (Rs.)</Label>
+                              <Label className="text-sm font-semibold">Rate (Rs.) *</Label>
                               <Input
                                 type="number"
                                 min="0"
@@ -985,7 +968,7 @@ export default function CreateFBRInvoice() {
                             </div>
                             
                             <div className="space-y-2">
-                              <Label className="text-sm font-semibold">Tax Rate</Label>
+                              <Label className="text-sm font-semibold">Tax Rate *</Label>
                               <Select
                                 value={item.rate}
                                 onValueChange={(value) => updateItem(index, 'rate', value)}
@@ -994,34 +977,106 @@ export default function CreateFBRInvoice() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="10%">10%</SelectItem>
-                                  <SelectItem value="18%">18%</SelectItem>
-                                  <SelectItem value="0%">0%</SelectItem>
+                                  {TAX_RATES.map(rate => (
+                                    <SelectItem key={rate.value} value={rate.value}>
+                                      {rate.label}
+                                    </SelectItem>
+                                  ))}
                                 </SelectContent>
                               </Select>
                             </div>
                           </div>
                           
+                          {/* Advanced Fields (Optional) */}
+                          <details className="group">
+                            <summary className="cursor-pointer text-sm font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-2">
+                              <Plus className="h-4 w-4 group-open:rotate-45 transition-transform" />
+                              Advanced Fields (Optional)
+                            </summary>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-300">
+                              <div className="space-y-2">
+                                <Label className="text-xs">Fixed/Notified Price</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.fixedNotifiedValueOrRetailPrice}
+                                  onChange={(e) => updateItem(index, 'fixedNotifiedValueOrRetailPrice', parseFloat(e.target.value) || 0)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs">Sales Tax Withheld</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.salesTaxWithheldAtSource}
+                                  onChange={(e) => updateItem(index, 'salesTaxWithheldAtSource', parseFloat(e.target.value) || 0)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs">Extra Tax</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.extraTax}
+                                  onChange={(e) => updateItem(index, 'extraTax', parseFloat(e.target.value) || 0)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs">Discount</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.discount}
+                                  onChange={(e) => updateItem(index, 'discount', parseFloat(e.target.value) || 0)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs">SRO Schedule No</Label>
+                                <Input
+                                  value={item.sroScheduleNo}
+                                  onChange={(e) => updateItem(index, 'sroScheduleNo', e.target.value)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs">SRO Item Serial No</Label>
+                                <Input
+                                  value={item.sroItemSerialNo}
+                                  onChange={(e) => updateItem(index, 'sroItemSerialNo', e.target.value)}
+                                  className="bg-white text-sm"
+                                />
+                              </div>
+                            </div>
+                          </details>
+                          
                           {/* Item Summary */}
                           <div className="pt-4 border-t border-gray-300">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                               <div className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Subtotal</p>
-                                <p className="font-bold text-gray-900">
+                                <p className="font-bold text-gray-900 text-sm">
                                   Rs. {formatNumber((item.valueSalesExcludingST || 0) * (item.quantity || 0))}
                                 </p>
                               </div>
                               <div className="bg-white p-3 rounded-lg border border-gray-200">
-                                <p className="text-xs text-gray-500 mb-1">Tax Amount</p>
-                                <p className="font-bold text-red-600">Rs. {formatNumber(item.salesTaxApplicable || 0)}</p>
+                                <p className="text-xs text-gray-500 mb-1">Sales Tax</p>
+                                <p className="font-bold text-red-600 text-sm">Rs. {formatNumber(item.salesTaxApplicable || 0)}</p>
+                              </div>
+                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                                <p className="text-xs text-gray-500 mb-1">Further Tax</p>
+                                <p className="font-bold text-orange-600 text-sm">Rs. {formatNumber(item.furtherTax || 0)}</p>
                               </div>
                               <div className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Advance Tax</p>
-                                <p className="font-bold text-amber-600">Rs. {formatNumber(item.fedPayable || 0)}</p>
+                                <p className="font-bold text-amber-600 text-sm">Rs. {formatNumber(item.fedPayable || 0)}</p>
                               </div>
                               <div className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Item Total</p>
-                                <p className="font-bold text-green-600 text-lg">Rs. {formatNumber(item.totalValues || 0)}</p>
+                                <p className="font-bold text-green-600 text-base">Rs. {formatNumber(item.totalValues || 0)}</p>
                               </div>
                             </div>
                           </div>
@@ -1033,7 +1088,7 @@ export default function CreateFBRInvoice() {
               </Card>
             </div>
 
-            {/* Right Column - Summary & Seller Info */}
+            {/* Right Column - Summary & Actions - Continue in Part 4... */}
             <div className="space-y-6">
               {/* Invoice Summary */}
               <Card className="border-0 shadow-xl bg-gradient-to-br from-blue-50 to-indigo-50">
@@ -1046,17 +1101,27 @@ export default function CreateFBRInvoice() {
                 <CardContent className="space-y-4">
                   <div className="space-y-3">
                     <div className="flex justify-between items-center py-2 border-b border-blue-200">
-                      <span className="text-gray-600">Subtotal</span>
+                      <span className="text-gray-600 text-sm">Subtotal</span>
                       <span className="font-bold">Rs. {formatNumber(totals.subTotal)}</span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-blue-200">
-                      <span className="text-gray-600">Sales Tax (10%)</span>
+                      <span className="text-gray-600 text-sm">Sales Tax</span>
                       <span className="font-bold text-red-600">Rs. {formatNumber(totals.salesTax)}</span>
                     </div>
                     <div className="flex justify-between items-center py-2 border-b border-blue-200">
-                      <span className="text-gray-600">Advance Tax (5.5%)</span>
+                      <span className="text-gray-600 text-sm">Further Tax</span>
+                      <span className="font-bold text-orange-600">Rs. {formatNumber(totals.furtherTax)}</span>
+                    </div>
+                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                      <span className="text-gray-600 text-sm">Advance Tax (5.5%)</span>
                       <span className="font-bold text-amber-600">Rs. {formatNumber(totals.advanceTax)}</span>
                     </div>
+                    {totals.totalDiscount > 0 && (
+                      <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                        <span className="text-gray-600 text-sm">Total Discount</span>
+                        <span className="font-bold text-green-600">- Rs. {formatNumber(totals.totalDiscount)}</span>
+                      </div>
+                    )}
                     <div className="pt-3 mt-2 border-t-2 border-blue-300">
                       <div className="flex justify-between items-center py-3">
                         <span className="font-bold text-xl text-gray-900">Net Total</span>
@@ -1078,28 +1143,24 @@ export default function CreateFBRInvoice() {
                 <CardContent>
                   <div className="space-y-2 text-sm">
                     <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">Company:</span>
-                      <span className="font-medium">MM ENTERPRISES</span>
+                      <span className="text-gray-600 font-medium min-w-20">Company:</span>
+                      <span className="font-medium">{SELLER_INFO.businessName}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">NTN:</span>
-                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">A081797-5</span>
+                      <span className="text-gray-600 font-medium min-w-20">NTN:</span>
+                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">{SELLER_INFO.ntn}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">STRN:</span>
-                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">3277876229942</span>
+                      <span className="text-gray-600 font-medium min-w-20">STRN:</span>
+                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">{SELLER_INFO.strn}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">Province:</span>
-                      <span className="font-medium">SINIDH</span>
+                      <span className="text-gray-600 font-medium min-w-20">Province:</span>
+                      <span className="font-medium">{SELLER_INFO.province}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">Address:</span>
-                      <span className="text-gray-700">SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-gray-600 font-medium">Phone:</span>
-                      <span className="font-medium">00923142392069</span>
+                      <span className="text-gray-600 font-medium min-w-20">Phone:</span>
+                      <span className="font-medium">{SELLER_INFO.phone}</span>
                     </div>
                   </div>
                 </CardContent>
@@ -1109,7 +1170,7 @@ export default function CreateFBRInvoice() {
               <Card className="border-0 shadow-xl bg-gradient-to-br from-gray-50 to-white">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5 text-gray-600" />
+                    <Zap className="h-5 w-5 text-gray-600" />
                     Quick Actions
                   </CardTitle>
                 </CardHeader>
@@ -1130,7 +1191,7 @@ export default function CreateFBRInvoice() {
                       disabled={loading}
                     >
                       <CheckCircle className="h-4 w-4" />
-                      Validate Invoice
+                      {loading ? 'Validating...' : 'Validate Invoice'}
                     </Button>
                     
                     <Button 
@@ -1139,7 +1200,7 @@ export default function CreateFBRInvoice() {
                       disabled={loading}
                     >
                       <Send className="h-4 w-4" />
-                      Submit to FBR
+                      {loading ? 'Submitting...' : 'Submit to FBR'}
                     </Button>
                   </div>
                 </CardContent>
@@ -1150,92 +1211,93 @@ export default function CreateFBRInvoice() {
 
         {/* Invoice Preview for Printing */}
         {showPreview && (
-          <div id="invoice-print" className="bg-white border-2 border-gray-800 p-8 print:p-4">
-            {/* Invoice Header Info */}
-            <div className="text-center mb-6">
-              <div className="mb-2">
-                <div className="text-sm">
-                  Invoice #: <strong>{localInvoiceNumber}</strong>  
-                  Invoice Date: <strong>{new Date(invoiceDate).toLocaleDateString('en-GB')}</strong>  
-                  Time: <strong>{invoiceTime}</strong>  
-                  User: <strong>{user}</strong>
-                </div>
+          <div id="invoice-print" className="bg-white border-2 border-gray-800 p-8 print:p-4 print:border-0">
+            {/* FBR Logo */}
+            <div className="flex justify-between items-start mb-6">
+              <div className="w-24 h-24 border border-gray-300 flex items-center justify-center text-xs text-gray-500">
+                FBR Logo
               </div>
-              
-              <h1 className="text-3xl font-bold mb-2">## SALES TAX INVOICE</h1>
+              <div className="text-right text-sm">
+                <div className="font-bold">Invoice #: {localInvoiceNumber}</div>
+                <div>Date: {new Date(invoiceDate).toLocaleDateString('en-GB')}</div>
+                <div>Time: {invoiceTime}</div>
+              </div>
+            </div>
+
+            {/* Invoice Header */}
+            <div className="text-center mb-6">
+              <h1 className="text-3xl font-bold mb-2">SALES TAX INVOICE</h1>
+              <div className="text-sm text-gray-600">
+                {invoiceType} - {apiMode.toUpperCase()} Mode
+                {scenarioId && apiMode === 'sandbox' && ` (${scenarioId})`}
+              </div>
             </div>
 
             {/* Buyer and Seller Details Side by Side */}
-            <div className="flex flex-col md:flex-row gap-8 mb-8">
+            <div className="grid grid-cols-2 gap-8 mb-8">
               {/* Buyer Details */}
-              <div className="flex-1">
-                <h2 className="text-xl font-bold mb-4">## BUYER&apos;S DETAIL:</h2>
+              <div className="border-2 border-gray-800 p-4">
+                <h2 className="text-xl font-bold mb-3 border-b-2 border-gray-800 pb-2">BUYER'S DETAIL</h2>
                 <div className="space-y-1 text-sm">
                   <div><strong>Customer Name:</strong> {buyerInfo.buyerBusinessName}</div>
                   <div><strong>CNIC/NTN #:</strong> {buyerInfo.buyerNTNCNIC}</div>
-                  <div><strong>GSTN #:</strong> </div>
+                  <div><strong>Registration:</strong> {buyerInfo.buyerRegistrationType}</div>
                   <div><strong>Address:</strong> {buyerInfo.buyerAddress}</div>
                   <div><strong>Province:</strong> {buyerInfo.buyerProvince}</div>
-                  <div><strong>Phone:</strong> {buyerInfo.buyerPhone || ''}</div>
-                  <div className="mt-4">{buyerInfo.buyerNTNCNIC}</div>
-                  <div>0</div>
-                  <div>{buyerInfo.buyerAddress}</div>
-                  <div>{buyerInfo.buyerProvince}</div>
-                  <div>0</div>
+                  {buyerInfo.buyerPhone && <div><strong>Phone:</strong> {buyerInfo.buyerPhone}</div>}
                 </div>
               </div>
 
               {/* Seller Details */}
-              <div className="flex-1">
-                <h2 className="text-xl font-bold mb-4">## SELLER&apos;S DETAIL:</h2>
+              <div className="border-2 border-gray-800 p-4">
+                <h2 className="text-xl font-bold mb-3 border-b-2 border-gray-800 pb-2">SELLER'S DETAIL</h2>
                 <div className="space-y-1 text-sm">
-                  <div><strong>Company Name:</strong> MM ENTERPRISES</div>
-                  <div><strong>Registration #:</strong> 4220108968444 NTN: A081797-5</div>
-                  <div><strong>GSTN #:</strong> 3277876229942</div>
-                  <div><strong>Address:</strong> SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN</div>
-                  <div><strong>Province:</strong> SINIDH</div>
-                  <div><strong>Phone:</strong> 00923142392069</div>
+                  <div><strong>Company Name:</strong> {SELLER_INFO.businessName}</div>
+                  <div><strong>NTN:</strong> {SELLER_INFO.ntn}</div>
+                  <div><strong>STRN:</strong> {SELLER_INFO.strn}</div>
+                  <div><strong>Registration #:</strong> {SELLER_INFO.registrationNumber}</div>
+                  <div><strong>Address:</strong> {SELLER_INFO.address}</div>
+                  <div><strong>Province:</strong> {SELLER_INFO.province}</div>
+                  <div><strong>Phone:</strong> {SELLER_INFO.phone}</div>
                 </div>
               </div>
             </div>
 
             {/* Items Table */}
             <div className="mb-8">
-              <table className="w-full border-collapse border border-gray-800 text-sm">
+              <table className="w-full border-collapse border-2 border-gray-800 text-xs">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="border border-gray-800 p-2 text-left">S.No.</th>
+                  <tr className="bg-gray-200">
+                    <th className="border border-gray-800 p-2 text-left">S.No</th>
                     <th className="border border-gray-800 p-2 text-left">HS Code</th>
                     <th className="border border-gray-800 p-2 text-left">Description</th>
-                    <th className="border border-gray-800 p-2 text-left">QTY</th>
-                    <th className="border border-gray-800 p-2 text-left">UOM</th>
-                    <th className="border border-gray-800 p-2 text-right">SALE RATE</th>
-                    <th className="border border-gray-800 p-2 text-right">Sales Value</th>
-                    <th className="border border-gray-800 p-2 text-right">Gross Total</th>
-                    <th className="border border-gray-800 p-2 text-right">GST %</th>
-                    <th className="border border-gray-800 p-2 text-right">GST Amount</th>
+                    <th className="border border-gray-800 p-2 text-center">QTY</th>
+                    <th className="border border-gray-800 p-2 text-center">UOM</th>
+                    <th className="border border-gray-800 p-2 text-right">Rate</th>
+                    <th className="border border-gray-800 p-2 text-right">Value</th>
+                    <th className="border border-gray-800 p-2 text-center">Tax%</th>
+                    <th className="border border-gray-800 p-2 text-right">Sales Tax</th>
                     <th className="border border-gray-800 p-2 text-right">Further Tax</th>
+                    <th className="border border-gray-800 p-2 text-right">Adv. Tax</th>
                     <th className="border border-gray-800 p-2 text-right">Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item, index) => (
-                    <tr key={index}>
+                    <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
                       <td className="border border-gray-800 p-2">{index + 1}</td>
-                      <td className="border border-gray-800 p-2 font-mono">{item.hsCode || ''}</td>
-                      <td className="border border-gray-800 p-2">{item.productDescription || ''}</td>
-                      <td className="border border-gray-800 p-2">{item.quantity || 0}</td>
-                      <td className="border border-gray-800 p-2">{item.uom || ''}</td>
+                      <td className="border border-gray-800 p-2 font-mono">{item.hsCode}</td>
+                      <td className="border border-gray-800 p-2">{item.productDescription}</td>
+                      <td className="border border-gray-800 p-2 text-center">{item.quantity}</td>
+                      <td className="border border-gray-800 p-2 text-center text-xs">{item.uom}</td>
                       <td className="border border-gray-800 p-2 text-right">{formatNumber(item.valueSalesExcludingST || 0)}</td>
                       <td className="border border-gray-800 p-2 text-right">
                         {formatNumber((item.valueSalesExcludingST || 0) * (item.quantity || 0))}
                       </td>
-                      <td className="border border-gray-800 p-2 text-right">
-                        {formatNumber(((item.valueSalesExcludingST || 0) * (item.quantity || 0)) + (item.salesTaxApplicable || 0))}
-                      </td>
-                      <td className="border border-gray-800 p-2 text-right">{item.rate || '0%'}</td>
+                      <td className="border border-gray-800 p-2 text-center">{item.rate}</td>
                       <td className="border border-gray-800 p-2 text-right">{formatNumber(item.salesTaxApplicable || 0)}</td>
-                      <td className="border border-gray-800 p-2 text-right">0.00</td>
+                      <td className="border border-gray-800 p-2 text-right">{formatNumber(item.furtherTax || 0)}</td>
+                      <td className="border border-gray-800 p-2 text-right">{formatNumber(item.fedPayable || 0)}</td>
                       <td className="border border-gray-800 p-2 text-right font-bold">
                         {formatNumber(item.totalValues || 0)}
                       </td>
@@ -1247,58 +1309,80 @@ export default function CreateFBRInvoice() {
 
             {/* Comments and FBR Info */}
             <div className="mb-6 text-sm">
-              <div><strong>Comments:</strong> {comments}</div>
+              {comments && <div className="mb-2"><strong>Comments:</strong> {comments}</div>}
               <div><strong>FBR INVOICE:</strong> {fbrInvoiceNumber || 'Not Available'}</div>
+              {apiMode === 'sandbox' && scenarioId && (
+                <div><strong>Scenario ID:</strong> {scenarioId}</div>
+              )}
             </div>
 
             {/* Totals Section */}
             <div className="mb-8">
               <div className="flex justify-end">
-                <div className="w-96">
-                  <div className="space-y-1 text-right">
-                    <div>
-                      <span className="font-bold">Total (excl. tax):</span>
-                      <span className="ml-4 font-bold">Rs. {formatNumber(totals.subTotal)}</span>
+                <div className="w-96 border-2 border-gray-800 p-4">
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                      <span className="font-semibold">Total (excl. tax):</span>
+                      <span className="font-semibold">Rs. {formatNumber(totals.subTotal)}</span>
                     </div>
-                    <div>
-                      <span>Total GST:</span>
-                      <span className="ml-4">Rs. {formatNumber(totals.salesTax)}</span>
+                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                      <span>Total Sales Tax:</span>
+                      <span>Rs. {formatNumber(totals.salesTax)}</span>
                     </div>
-                    <div>
-                      <span>Net Total (inc. tax):</span>
-                      <span className="ml-4">Rs. {formatNumber(totals.grandTotal)}</span>
-                    </div>
-                    <div>
+                    <div className="flex justify-between pb-2 border-b border-gray-400">
                       <span>Total Further Tax:</span>
-                      <span className="ml-4">Rs. {formatNumber(totals.furtherTax)}</span>
+                      <span>Rs. {formatNumber(totals.furtherTax)}</span>
                     </div>
-                    <div>
-                      <span>Advance Tax:</span>
-                      <span className="ml-4">Rs. {formatNumber(totals.advanceTax)}</span>
+                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                      <span>Total Advance Tax:</span>
+                      <span>Rs. {formatNumber(totals.advanceTax)}</span>
                     </div>
-                    <div className="pt-2 border-t-2 border-gray-800 mt-2">
-                      <span className="font-bold text-lg">Net Total:</span>
-                      <span className="ml-4 font-bold text-lg">Rs. {formatNumber(totals.netTotal)}</span>
+                    {totals.totalDiscount > 0 && (
+                      <div className="flex justify-between pb-2 border-b border-gray-400">
+                        <span>Total Discount:</span>
+                        <span className="text-green-600">- Rs. {formatNumber(totals.totalDiscount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-3 border-t-2 border-gray-800 mt-2">
+                      <span className="font-bold text-lg">NET TOTAL:</span>
+                      <span className="font-bold text-lg">Rs. {formatNumber(totals.netTotal)}</span>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* QR Code Placeholder */}
-            <div className="mb-6">
-              <div className="float-right w-32 h-32 border-2 border-gray-800 flex items-center justify-center text-gray-600 text-sm">
-                [QR Code Placeholder]
+            {/* QR Code and Signature Section */}
+            <div className="flex justify-between items-start mb-8">
+              <div className="w-32 h-32 border-2 border-gray-800 flex items-center justify-center">
+                {qrCodeUrl ? (
+                  <img src={qrCodeUrl} alt="QR Code" className="w-full h-full" />
+                ) : (
+                  <span className="text-xs text-gray-500 text-center p-2">QR Code</span>
+                )}
               </div>
-              <div className="clear-both"></div>
+              
+              <div className="text-right">
+                <div className="mb-16"></div>
+                <div className="border-t-2 border-gray-800 pt-2 w-48">
+                  <p className="text-sm font-semibold">Authorized Signature</p>
+                </div>
+              </div>
             </div>
 
             {/* Note Section */}
             <div className="mt-12 pt-6 border-t-2 border-gray-800">
-              <h3 className="font-bold mb-2">## NOTE:</h3>
-              <p className="text-sm">
-                It is to certify that goods supplied to you under this invoice has been imported and income tax has already been paid U/S 148. Therefore, please do not deduct the withholding income tax U/S 153 (1), 153(5) and as per clause (47- A) Part VI of the Second schedule of Income Tax Ordinance, 2001.
+              <h3 className="font-bold mb-2">NOTE:</h3>
+              <p className="text-xs leading-relaxed">
+                It is to certify that goods supplied to you under this invoice has been imported and income tax has already been paid U/S 148. 
+                Therefore, please do not deduct the withholding income tax U/S 153 (1), 153(5) and as per clause (47-A) Part VI of the Second 
+                schedule of Income Tax Ordinance, 2001.
               </p>
+            </div>
+
+            {/* Footer */}
+            <div className="mt-8 text-center text-xs text-gray-600 border-t pt-4">
+              <p>Generated by FBR Digital Invoicing System | {new Date().toLocaleDateString('en-GB')}</p>
             </div>
           </div>
         )}
@@ -1351,13 +1435,17 @@ export default function CreateFBRInvoice() {
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
-            padding: 0 !important;
+            padding: 20mm !important;
             margin: 0 !important;
             border: none !important;
             background: white !important;
           }
-          .no-print, .print\\:hidden {
+          .print\\:hidden {
             display: none !important;
+          }
+          @page {
+            size: A4;
+            margin: 10mm;
           }
         }
       `}</style>
