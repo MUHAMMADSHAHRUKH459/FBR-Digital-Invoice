@@ -72,14 +72,14 @@ export const TEXTILE_HS_CODES = [
   { code: '8471.3010', description: 'Computer Equipment & Electronics' }
 ];
 
-// Your Business Details
+// Your Business Details - UPDATED WITH CORRECT NTN
 export const SELLER_INFO = {
-  ntn: 'A081797-5',
+  ntn: '8985694',  // ✅ CORRECT - Your actual 7-digit NTN (was A081797-5)
   strn: '3277876229942',
-  registrationNumber: '4220108968444',
+  registrationNumber: '4220163565503',  // ✅ UPDATED - Your actual registration number
   businessName: 'MM ENTERPRISES',
   address: 'SHOP. NO # 818, 8TH FLOOR, REGAL TRADE SQUARE, SADDAR, KARACHI, PAKISTAN',
-  province: 'SINIDH',
+  province: 'SINDH',  // ✅ FIXED: Changed from SINIDH to SINDH
   location: 'Karachi',
   phone: '00923142392069',
   gstRate: 18
@@ -184,7 +184,7 @@ export const FBR_ERROR_CODES: Record<string, string> = {
   '0310': 'Invalid discount amount',
   
   // Tax Errors (0401-0499)
-  '0401': 'Sales tax calculation error',
+  '0401': 'Unauthorized - Invalid or expired token or NTN mismatch',
   '0402': 'Further tax calculation error',
   '0403': 'Extra tax not applicable',
   '0404': 'Withholding tax error',

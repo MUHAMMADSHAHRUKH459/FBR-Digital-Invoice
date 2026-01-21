@@ -34,13 +34,13 @@ export default function CreateFBRInvoice() {
   const [scenarioId, setScenarioId] = useState('SN001');
   const [invoiceDate, setInvoiceDate] = useState(formatDate(new Date()));
   const [invoiceTime] = useState(formatTime(new Date()));
-  const [localInvoiceNumber] = useState(`INV${Date.now().toString().slice(-6)}`);
+  const [localInvoiceNumber, setLocalInvoiceNumber] = useState('');
 
   // Buyer Information
   const [buyerInfo, setBuyerInfo] = useState({
     buyerNTNCNIC: '3281099',
     buyerBusinessName: 'M/S EVERNEW TECHNOLOGIES',
-    buyerProvince: 'SINIDH',
+    buyerProvince: 'SINDH',
     buyerAddress: 'Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South',
     buyerRegistrationType: 'Registered' as 'Registered' | 'Unregistered',
     buyerPhone: '',
@@ -84,6 +84,11 @@ export default function CreateFBRInvoice() {
   const [provinces, setProvinces] = useState(PROVINCES);
   const [uomList, setUomList] = useState(UOM_OPTIONS);
   const [hsCodeList, setHsCodeList] = useState(TEXTILE_HS_CODES);
+
+  // Generate invoice number on client-side only (fixes hydration mismatch)
+  useEffect(() => {
+    setLocalInvoiceNumber(`INV${Date.now().toString().slice(-6)}`);
+  }, []);
 
   // Check demo mode on mount
   useEffect(() => {
@@ -139,28 +144,28 @@ export default function CreateFBRInvoice() {
   const totals = calculateInvoiceTotals(items as InvoiceItem[]);
 
   // Generate QR Code
-  const generateQRCode = async (invoiceNumber: string) => {
-    try {
-      const qrData = JSON.stringify({
-        invoiceNumber: invoiceNumber,
-        sellerNTN: SELLER_INFO.ntn,
-        buyerNTN: buyerInfo.buyerNTNCNIC,
-        total: totals.netTotal,
-        date: invoiceDate
-      });
-      
-      const qrUrl = await QRCode.toDataURL(qrData, {
-        width: 200,
-        margin: 1,
-        errorCorrectionLevel: 'M',
-        version: 2
-      });
-      
-      setQrCodeUrl(qrUrl);
-    } catch (error) {
-      console.error('Error generating QR code:', error);
-    }
-  };
+ const generateQRCode = async (invoiceNumber: string) => {
+  try {
+    // Simplified data - only essential info for QR
+    const qrData = JSON.stringify({
+      inv: invoiceNumber,
+      amt: totals.netTotal,
+      date: invoiceDate
+    });
+    
+    const qrUrl = await QRCode.toDataURL(qrData, {
+      width: 200,
+      margin: 1,
+      errorCorrectionLevel: 'L', // Changed from 'M' to 'L' (more capacity)
+      version: 10 // Changed from 2 to 10 (handles more data)
+    });
+    
+    setQrCodeUrl(qrUrl);
+  } catch (error) {
+    console.error('Error generating QR code:', error);
+    setQrCodeUrl(''); // Set empty instead of crashing
+  }
+};
 
   // Add new item
   const addItem = () => {
@@ -353,7 +358,7 @@ export default function CreateFBRInvoice() {
     setBuyerInfo({
       buyerNTNCNIC: '',
       buyerBusinessName: '',
-      buyerProvince: 'SINIDH',
+      buyerProvince: 'SINDH',
       buyerAddress: '',
       buyerRegistrationType: 'Registered',
       buyerPhone: '',
@@ -380,6 +385,8 @@ export default function CreateFBRInvoice() {
     }]);
     setInvoiceDate(formatDate(new Date()));
     setComments('');
+    // Generate new invoice number
+    setLocalInvoiceNumber(`INV${Date.now().toString().slice(-6)}`);
   };
 
   // Copy to Clipboard
@@ -485,7 +492,7 @@ export default function CreateFBRInvoice() {
                   Invoice Settings
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
+                  <div key="setting-invoice-type">
                     <Label className="text-white mb-2 block">Invoice Type</Label>
                     <Select value={invoiceType} onValueChange={(value: any) => setInvoiceType(value)}>
                       <SelectTrigger className="bg-white/20 border-white/30 text-white">
@@ -499,7 +506,7 @@ export default function CreateFBRInvoice() {
                     </Select>
                   </div>
                   
-                  <div>
+                  <div key="setting-api-mode">
                     <Label className="text-white mb-2 block flex items-center gap-2">
                       API Mode 
                       {!isDemoMode && (
@@ -518,7 +525,7 @@ export default function CreateFBRInvoice() {
                   </div>
                   
                   {apiMode === 'sandbox' && !isDemoMode && (
-                    <div>
+                    <div key="setting-scenario">
                       <Label className="text-white mb-2 block">Scenario ID (Testing)</Label>
                       <Select value={scenarioId} onValueChange={setScenarioId}>
                         <SelectTrigger className="bg-white/20 border-white/30 text-white">
@@ -549,11 +556,11 @@ export default function CreateFBRInvoice() {
 
             {/* Invoice Info Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-8 border-t border-white/20">
-              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+              <div key="info-invoice-number" className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-100">Invoice Number</p>
-                    <p className="text-lg font-bold mt-1 font-mono">{localInvoiceNumber}</p>
+                    <p className="text-lg font-bold mt-1 font-mono">{localInvoiceNumber || 'Loading...'}</p>
                   </div>
                   <div className="bg-blue-500/20 p-2 rounded-lg">
                     <Hash className="h-5 w-5 text-blue-300" />
@@ -561,7 +568,7 @@ export default function CreateFBRInvoice() {
                 </div>
               </div>
 
-              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+              <div key="info-invoice-date" className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-100">Invoice Date</p>
@@ -575,7 +582,7 @@ export default function CreateFBRInvoice() {
                 </div>
               </div>
 
-              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+              <div key="info-total-items" className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-100">Total Items</p>
@@ -587,7 +594,7 @@ export default function CreateFBRInvoice() {
                 </div>
               </div>
 
-              <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
+              <div key="info-net-total" className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-100">Net Total</p>
@@ -710,23 +717,23 @@ export default function CreateFBRInvoice() {
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
                     <h4 className="font-medium text-blue-900 mb-2 text-sm">📋 Required Excel Format:</h4>
                     <div className="text-sm text-blue-800 space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div key="col-a" className="flex items-center gap-2">
                         <div className="w-24 font-medium">Column A:</div>
                         <div>HS Code</div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div key="col-b" className="flex items-center gap-2">
                         <div className="w-24 font-medium">Column B:</div>
                         <div>Product Description</div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div key="col-c" className="flex items-center gap-2">
                         <div className="w-24 font-medium">Column C:</div>
                         <div>Quantity</div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div key="col-d" className="flex items-center gap-2">
                         <div className="w-24 font-medium">Column D:</div>
                         <div>Rate per unit</div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div key="col-e" className="flex items-center gap-2">
                         <div className="w-24 font-medium">Column E:</div>
                         <div>Tax Rate (%)</div>
                       </div>
@@ -742,7 +749,7 @@ export default function CreateFBRInvoice() {
         {showForm && !showPreview && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left Column - Forms */}
-            <div className="lg:col-span-2 space-y-6">
+            <div key="left-column" className="lg:col-span-2 space-y-6">
               {/* Buyer Information Card */}
               <Card className="border-0 shadow-xl bg-white">
                 <CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-t-xl p-6">
@@ -753,7 +760,7 @@ export default function CreateFBRInvoice() {
                 </CardHeader>
                 <CardContent className="p-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div className="space-y-2">
+                    <div key="buyer-name-field" className="space-y-2">
                       <Label className="text-sm font-semibold">Customer Name *</Label>
                       <Input
                         value={buyerInfo.buyerBusinessName}
@@ -763,7 +770,7 @@ export default function CreateFBRInvoice() {
                       />
                     </div>
                     
-                    <div className="space-y-2">
+                    <div key="buyer-ntn-field" className="space-y-2">
                       <Label className="text-sm font-semibold">CNIC/NTN # *</Label>
                       <Input
                         value={buyerInfo.buyerNTNCNIC}
@@ -773,7 +780,7 @@ export default function CreateFBRInvoice() {
                       />
                     </div>
                     
-                    <div className="space-y-2">
+                    <div key="buyer-reg-field" className="space-y-2">
                       <Label className="text-sm font-semibold">Registration Type *</Label>
                       <Select
                         value={buyerInfo.buyerRegistrationType}
@@ -790,7 +797,7 @@ export default function CreateFBRInvoice() {
                       </Select>
                     </div>
                     
-                    <div className="space-y-2">
+                    <div key="buyer-phone-field" className="space-y-2">
                       <Label className="text-sm font-semibold">Phone</Label>
                       <Input
                         value={buyerInfo.buyerPhone}
@@ -800,7 +807,7 @@ export default function CreateFBRInvoice() {
                       />
                     </div>
                     
-                    <div className="md:col-span-2 space-y-2">
+                    <div key="buyer-address-field" className="md:col-span-2 space-y-2">
                       <Label className="text-sm font-semibold">Address *</Label>
                       <Input
                         value={buyerInfo.buyerAddress}
@@ -810,7 +817,7 @@ export default function CreateFBRInvoice() {
                       />
                     </div>
                     
-                    <div className="space-y-2">
+                    <div key="buyer-province-field" className="space-y-2">
                       <Label className="text-sm font-semibold">Province *</Label>
                       <Select
                         value={buyerInfo.buyerProvince}
@@ -829,7 +836,7 @@ export default function CreateFBRInvoice() {
                       </Select>
                     </div>
                     
-                    <div className="space-y-2">
+                    <div key="buyer-comments-field" className="space-y-2">
                       <Label className="text-sm font-semibold">Comments</Label>
                       <Input
                         value={comments}
@@ -894,7 +901,7 @@ export default function CreateFBRInvoice() {
                         
                         <div className="space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-2">
+                            <div key="field-hscode" className="space-y-2">
                               <Label className="text-sm font-semibold">HS Code *</Label>
                               <Select
                                 value={item.hsCode}
@@ -913,7 +920,7 @@ export default function CreateFBRInvoice() {
                               </Select>
                             </div>
                             
-                            <div className="space-y-2">
+                            <div key="field-description" className="space-y-2">
                               <Label className="text-sm font-semibold">Product Description *</Label>
                               <Input
                                 value={item.productDescription}
@@ -925,7 +932,7 @@ export default function CreateFBRInvoice() {
                           </div>
                           
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="space-y-2">
+                            <div key="field-quantity" className="space-y-2">
                               <Label className="text-sm font-semibold">Quantity *</Label>
                               <Input
                                 type="number"
@@ -936,7 +943,7 @@ export default function CreateFBRInvoice() {
                               />
                             </div>
                             
-                            <div className="space-y-2">
+                            <div key="field-uom" className="space-y-2">
                               <Label className="text-sm font-semibold">UOM *</Label>
                               <Select
                                 value={item.uom}
@@ -955,7 +962,7 @@ export default function CreateFBRInvoice() {
                               </Select>
                             </div>
                             
-                            <div className="space-y-2">
+                            <div key="field-rate" className="space-y-2">
                               <Label className="text-sm font-semibold">Rate (Rs.) *</Label>
                               <Input
                                 type="number"
@@ -967,7 +974,7 @@ export default function CreateFBRInvoice() {
                               />
                             </div>
                             
-                            <div className="space-y-2">
+                            <div key="field-taxrate" className="space-y-2">
                               <Label className="text-sm font-semibold">Tax Rate *</Label>
                               <Select
                                 value={item.rate}
@@ -994,7 +1001,7 @@ export default function CreateFBRInvoice() {
                               Advanced Fields (Optional)
                             </summary>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-300">
-                              <div className="space-y-2">
+                              <div key="adv-fixed-price" className="space-y-2">
                                 <Label className="text-xs">Fixed/Notified Price</Label>
                                 <Input
                                   type="number"
@@ -1004,7 +1011,7 @@ export default function CreateFBRInvoice() {
                                   className="bg-white text-sm"
                                 />
                               </div>
-                              <div className="space-y-2">
+                              <div key="adv-withheld" className="space-y-2">
                                 <Label className="text-xs">Sales Tax Withheld</Label>
                                 <Input
                                   type="number"
@@ -1014,7 +1021,7 @@ export default function CreateFBRInvoice() {
                                   className="bg-white text-sm"
                                 />
                               </div>
-                              <div className="space-y-2">
+                              <div key="adv-extra-tax" className="space-y-2">
                                 <Label className="text-xs">Extra Tax</Label>
                                 <Input
                                   type="number"
@@ -1024,7 +1031,7 @@ export default function CreateFBRInvoice() {
                                   className="bg-white text-sm"
                                 />
                               </div>
-                              <div className="space-y-2">
+                              <div key="adv-discount" className="space-y-2">
                                 <Label className="text-xs">Discount</Label>
                                 <Input
                                   type="number"
@@ -1034,7 +1041,7 @@ export default function CreateFBRInvoice() {
                                   className="bg-white text-sm"
                                 />
                               </div>
-                              <div className="space-y-2">
+                              <div key="adv-sro-schedule" className="space-y-2">
                                 <Label className="text-xs">SRO Schedule No</Label>
                                 <Input
                                   value={item.sroScheduleNo}
@@ -1042,7 +1049,7 @@ export default function CreateFBRInvoice() {
                                   className="bg-white text-sm"
                                 />
                               </div>
-                              <div className="space-y-2">
+                              <div key="adv-sro-serial" className="space-y-2">
                                 <Label className="text-xs">SRO Item Serial No</Label>
                                 <Input
                                   value={item.sroItemSerialNo}
@@ -1056,25 +1063,25 @@ export default function CreateFBRInvoice() {
                           {/* Item Summary */}
                           <div className="pt-4 border-t border-gray-300">
                             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                              <div key="subtotal" className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Subtotal</p>
                                 <p className="font-bold text-gray-900 text-sm">
                                   Rs. {formatNumber((item.valueSalesExcludingST || 0) * (item.quantity || 0))}
                                 </p>
                               </div>
-                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                              <div key="sales-tax" className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Sales Tax</p>
                                 <p className="font-bold text-red-600 text-sm">Rs. {formatNumber(item.salesTaxApplicable || 0)}</p>
                               </div>
-                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                              <div key="further-tax" className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Further Tax</p>
                                 <p className="font-bold text-orange-600 text-sm">Rs. {formatNumber(item.furtherTax || 0)}</p>
                               </div>
-                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                              <div key="advance-tax" className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Advance Tax</p>
                                 <p className="font-bold text-amber-600 text-sm">Rs. {formatNumber(item.fedPayable || 0)}</p>
                               </div>
-                              <div className="bg-white p-3 rounded-lg border border-gray-200">
+                              <div key="item-total" className="bg-white p-3 rounded-lg border border-gray-200">
                                 <p className="text-xs text-gray-500 mb-1">Item Total</p>
                                 <p className="font-bold text-green-600 text-base">Rs. {formatNumber(item.totalValues || 0)}</p>
                               </div>
@@ -1089,7 +1096,7 @@ export default function CreateFBRInvoice() {
             </div>
 
             {/* Right Column - Summary & Actions - Continue in Part 4... */}
-            <div className="space-y-6">
+            <div key="right-column" className="space-y-6">
               {/* Invoice Summary */}
               <Card className="border-0 shadow-xl bg-gradient-to-br from-blue-50 to-indigo-50">
                 <CardHeader className="pb-3">
@@ -1100,29 +1107,29 @@ export default function CreateFBRInvoice() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-3">
-                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                    <div key="summary-subtotal" className="flex justify-between items-center py-2 border-b border-blue-200">
                       <span className="text-gray-600 text-sm">Subtotal</span>
                       <span className="font-bold">Rs. {formatNumber(totals.subTotal)}</span>
                     </div>
-                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                    <div key="summary-sales-tax" className="flex justify-between items-center py-2 border-b border-blue-200">
                       <span className="text-gray-600 text-sm">Sales Tax</span>
                       <span className="font-bold text-red-600">Rs. {formatNumber(totals.salesTax)}</span>
                     </div>
-                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                    <div key="summary-further-tax" className="flex justify-between items-center py-2 border-b border-blue-200">
                       <span className="text-gray-600 text-sm">Further Tax</span>
                       <span className="font-bold text-orange-600">Rs. {formatNumber(totals.furtherTax)}</span>
                     </div>
-                    <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                    <div key="summary-advance-tax" className="flex justify-between items-center py-2 border-b border-blue-200">
                       <span className="text-gray-600 text-sm">Advance Tax (5.5%)</span>
                       <span className="font-bold text-amber-600">Rs. {formatNumber(totals.advanceTax)}</span>
                     </div>
                     {totals.totalDiscount > 0 && (
-                      <div className="flex justify-between items-center py-2 border-b border-blue-200">
+                      <div key="summary-discount" className="flex justify-between items-center py-2 border-b border-blue-200">
                         <span className="text-gray-600 text-sm">Total Discount</span>
                         <span className="font-bold text-green-600">- Rs. {formatNumber(totals.totalDiscount)}</span>
                       </div>
                     )}
-                    <div className="pt-3 mt-2 border-t-2 border-blue-300">
+                    <div key="summary-net-total" className="pt-3 mt-2 border-t-2 border-blue-300">
                       <div className="flex justify-between items-center py-3">
                         <span className="font-bold text-xl text-gray-900">Net Total</span>
                         <span className="font-bold text-2xl text-blue-700">Rs. {formatNumber(totals.netTotal)}</span>
@@ -1142,23 +1149,23 @@ export default function CreateFBRInvoice() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2 text-sm">
-                    <div className="flex items-start gap-2">
+                    <div key="seller-company" className="flex items-start gap-2">
                       <span className="text-gray-600 font-medium min-w-20">Company:</span>
                       <span className="font-medium">{SELLER_INFO.businessName}</span>
                     </div>
-                    <div className="flex items-start gap-2">
+                    <div key="seller-ntn" className="flex items-start gap-2">
                       <span className="text-gray-600 font-medium min-w-20">NTN:</span>
                       <span className="font-mono bg-gray-100 px-2 py-1 rounded">{SELLER_INFO.ntn}</span>
                     </div>
-                    <div className="flex items-start gap-2">
+                    <div key="seller-strn" className="flex items-start gap-2">
                       <span className="text-gray-600 font-medium min-w-20">STRN:</span>
                       <span className="font-mono bg-gray-100 px-2 py-1 rounded">{SELLER_INFO.strn}</span>
                     </div>
-                    <div className="flex items-start gap-2">
+                    <div key="seller-province" className="flex items-start gap-2">
                       <span className="text-gray-600 font-medium min-w-20">Province:</span>
                       <span className="font-medium">{SELLER_INFO.province}</span>
                     </div>
-                    <div className="flex items-start gap-2">
+                    <div key="seller-phone" className="flex items-start gap-2">
                       <span className="text-gray-600 font-medium min-w-20">Phone:</span>
                       <span className="font-medium">{SELLER_INFO.phone}</span>
                     </div>
@@ -1236,29 +1243,29 @@ export default function CreateFBRInvoice() {
             {/* Buyer and Seller Details Side by Side */}
             <div className="grid grid-cols-2 gap-8 mb-8">
               {/* Buyer Details */}
-              <div className="border-2 border-gray-800 p-4">
+              <div key="preview-buyer-box" className="border-2 border-gray-800 p-4">
                 <h2 className="text-xl font-bold mb-3 border-b-2 border-gray-800 pb-2">BUYER'S DETAIL</h2>
                 <div className="space-y-1 text-sm">
-                  <div><strong>Customer Name:</strong> {buyerInfo.buyerBusinessName}</div>
-                  <div><strong>CNIC/NTN #:</strong> {buyerInfo.buyerNTNCNIC}</div>
-                  <div><strong>Registration:</strong> {buyerInfo.buyerRegistrationType}</div>
-                  <div><strong>Address:</strong> {buyerInfo.buyerAddress}</div>
-                  <div><strong>Province:</strong> {buyerInfo.buyerProvince}</div>
-                  {buyerInfo.buyerPhone && <div><strong>Phone:</strong> {buyerInfo.buyerPhone}</div>}
+                  <div key="buyer-name"><strong>Customer Name:</strong> {buyerInfo.buyerBusinessName}</div>
+                  <div key="buyer-ntn"><strong>CNIC/NTN #:</strong> {buyerInfo.buyerNTNCNIC}</div>
+                  <div key="buyer-reg"><strong>Registration:</strong> {buyerInfo.buyerRegistrationType}</div>
+                  <div key="buyer-address"><strong>Address:</strong> {buyerInfo.buyerAddress}</div>
+                  <div key="buyer-province"><strong>Province:</strong> {buyerInfo.buyerProvince}</div>
+                  {buyerInfo.buyerPhone && <div key="buyer-phone"><strong>Phone:</strong> {buyerInfo.buyerPhone}</div>}
                 </div>
               </div>
 
               {/* Seller Details */}
-              <div className="border-2 border-gray-800 p-4">
+              <div key="preview-seller-box" className="border-2 border-gray-800 p-4">
                 <h2 className="text-xl font-bold mb-3 border-b-2 border-gray-800 pb-2">SELLER'S DETAIL</h2>
                 <div className="space-y-1 text-sm">
-                  <div><strong>Company Name:</strong> {SELLER_INFO.businessName}</div>
-                  <div><strong>NTN:</strong> {SELLER_INFO.ntn}</div>
-                  <div><strong>STRN:</strong> {SELLER_INFO.strn}</div>
-                  <div><strong>Registration #:</strong> {SELLER_INFO.registrationNumber}</div>
-                  <div><strong>Address:</strong> {SELLER_INFO.address}</div>
-                  <div><strong>Province:</strong> {SELLER_INFO.province}</div>
-                  <div><strong>Phone:</strong> {SELLER_INFO.phone}</div>
+                  <div key="seller-name"><strong>Company Name:</strong> {SELLER_INFO.businessName}</div>
+                  <div key="seller-ntn"><strong>NTN:</strong> {SELLER_INFO.ntn}</div>
+                  <div key="seller-strn"><strong>STRN:</strong> {SELLER_INFO.strn}</div>
+                  <div key="seller-reg"><strong>Registration #:</strong> {SELLER_INFO.registrationNumber}</div>
+                  <div key="seller-address"><strong>Address:</strong> {SELLER_INFO.address}</div>
+                  <div key="seller-province"><strong>Province:</strong> {SELLER_INFO.province}</div>
+                  <div key="seller-phone"><strong>Phone:</strong> {SELLER_INFO.phone}</div>
                 </div>
               </div>
             </div>
@@ -1321,29 +1328,29 @@ export default function CreateFBRInvoice() {
               <div className="flex justify-end">
                 <div className="w-96 border-2 border-gray-800 p-4">
                   <div className="space-y-2 text-sm">
-                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                    <div key="preview-subtotal" className="flex justify-between pb-2 border-b border-gray-400">
                       <span className="font-semibold">Total (excl. tax):</span>
                       <span className="font-semibold">Rs. {formatNumber(totals.subTotal)}</span>
                     </div>
-                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                    <div key="preview-sales-tax" className="flex justify-between pb-2 border-b border-gray-400">
                       <span>Total Sales Tax:</span>
                       <span>Rs. {formatNumber(totals.salesTax)}</span>
                     </div>
-                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                    <div key="preview-further-tax" className="flex justify-between pb-2 border-b border-gray-400">
                       <span>Total Further Tax:</span>
                       <span>Rs. {formatNumber(totals.furtherTax)}</span>
                     </div>
-                    <div className="flex justify-between pb-2 border-b border-gray-400">
+                    <div key="preview-advance-tax" className="flex justify-between pb-2 border-b border-gray-400">
                       <span>Total Advance Tax:</span>
                       <span>Rs. {formatNumber(totals.advanceTax)}</span>
                     </div>
                     {totals.totalDiscount > 0 && (
-                      <div className="flex justify-between pb-2 border-b border-gray-400">
+                      <div key="preview-discount" className="flex justify-between pb-2 border-b border-gray-400">
                         <span>Total Discount:</span>
                         <span className="text-green-600">- Rs. {formatNumber(totals.totalDiscount)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between pt-3 border-t-2 border-gray-800 mt-2">
+                    <div key="preview-net-total" className="flex justify-between pt-3 border-t-2 border-gray-800 mt-2">
                       <span className="font-bold text-lg">NET TOTAL:</span>
                       <span className="font-bold text-lg">Rs. {formatNumber(totals.netTotal)}</span>
                     </div>
