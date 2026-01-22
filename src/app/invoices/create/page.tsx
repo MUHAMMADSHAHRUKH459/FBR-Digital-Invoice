@@ -1,5 +1,6 @@
 'use client';
 
+import * as XLSX from 'xlsx';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -225,17 +226,117 @@ export default function CreateFBRInvoice() {
 
   // Handle Excel Import
   const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const file = e.target.files?.[0];
+  if (!file) return;
 
-    try {
-      // TODO: Implement actual Excel parsing
-      alert('Excel import feature coming soon!');
-      setShowExcelImport(false);
-    } catch (error) {
-      alert('❌ Error reading Excel file. Please check the format.');
+  try {
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      try {
+        const data = event.target?.result;
+        const workbook = XLSX.read(data, { type: 'binary' });
+        
+        // Get first sheet
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Convert to JSON
+        const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
+        
+        if (jsonData.length === 0) {
+          alert('❌ Excel file is empty!');
+          return;
+        }
+        
+        // Map Excel data to invoice items
+        const importedItems = jsonData.map((row: any) => {
+          // Handle different possible column names
+          const hsCode = row['HS Code'] || row['HSCode'] || row['hs_code'] || '8471.3010';
+          const description = row['Description'] || row['Product Description'] || row['description'] || '';
+          const quantity = parseFloat(row['Quantity'] || row['quantity'] || row['Qty'] || 1);
+          const rate = parseFloat(row['Rate'] || row['Price'] || row['rate'] || 0);
+          const taxRate = row['Tax Rate'] || row['Tax'] || row['tax_rate'] || '18%';
+          
+          // Ensure tax rate has % sign
+          const formattedTaxRate = taxRate.toString().includes('%') ? taxRate : `${taxRate}%`;
+          
+          return {
+            hsCode: hsCode.toString(),
+            productDescription: description.toString(),
+            rate: formattedTaxRate,
+            uom: 'Numbers, pieces, units',
+            quantity: quantity,
+            valueSalesExcludingST: rate,
+            fixedNotifiedValueOrRetailPrice: 0,
+            salesTaxApplicable: 0,
+            salesTaxWithheldAtSource: 0,
+            extraTax: 0,
+            furtherTax: 0,
+            sroScheduleNo: '',
+            fedPayable: 0,
+            discount: 0,
+            saleType: 'Goods at standard rate (default)',
+            sroItemSerialNo: '',
+            totalValues: 0
+          };
+        });
+        
+        // Calculate totals for all items
+        const isRegistered = buyerInfo.buyerRegistrationType === 'Registered';
+        const calculatedItems = importedItems.map(item => 
+          calculateInvoiceItemTotals(item, isRegistered)
+        );
+        
+        // Set items
+        setItems(calculatedItems);
+        setShowExcelImport(false);
+        
+        alert(`✅ Successfully imported ${importedItems.length} items from Excel!`);
+        
+      } catch (parseError) {
+        console.error('Parse error:', parseError);
+        alert('❌ Error parsing Excel file. Please check the format.');
+      }
+    };
+    
+    reader.onerror = () => {
+      alert('❌ Error reading file.');
+    };
+    
+    reader.readAsBinaryString(file);
+    
+  } catch (error) {
+    console.error('Import error:', error);
+    alert('❌ Error reading Excel file. Please check the format.');
+  }
+};
+
+// Export: Sample Excel template for users to download
+ const downloadExcelTemplate = () => {
+  const template = [
+    {
+      'HS Code': '8471.3010',
+      'Description': 'Used Chromebook',
+      'Quantity': 10,
+      'Rate': 5000,
+      'Tax Rate': '18%'
+    },
+    {
+      'HS Code': '6109.1000',
+      'Description': 'Cotton T-Shirt',
+      'Quantity': 50,
+      'Rate': 500,
+      'Tax Rate': '10%'
     }
-  };
+  ];
+  
+  const worksheet = XLSX.utils.json_to_sheet(template);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Invoice Items');
+  
+  XLSX.writeFile(workbook, 'FBR_Invoice_Template.xlsx');
+};
 
   // Validate Invoice
   const handleValidate = async () => {
