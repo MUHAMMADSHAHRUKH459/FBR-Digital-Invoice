@@ -1,11 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Shield, Lock, Mail, Eye, EyeOff, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 
-export default function LoginPage() {
+// Force dynamic rendering to prevent prerender errors
+export const dynamic = 'force-dynamic';
+
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
@@ -252,5 +255,26 @@ export default function LoginPage() {
         </div>       
       </div>
     </div>
+  );
+}
+
+// Loading fallback component
+function LoginLoading() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-slate-100 flex items-center justify-center">
+      <div className="text-center">
+        <Loader2 className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
+        <p className="text-gray-600 font-medium">Loading...</p>
+      </div>
+    </div>
+  );
+}
+
+// Main component with Suspense boundary
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <LoginForm />
+    </Suspense>
   );
 }
