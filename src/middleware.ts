@@ -1,6 +1,3 @@
-// middleware.ts - IMPROVED VERSION
-// Replace your current middleware.ts with this
-
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -41,19 +38,20 @@ export async function middleware(req: NextRequest) {
     userEmail: session?.user?.email
   });
 
-  // 🔐 Protected routes - ONLY local invoices
-  const protectedPaths = [
+  // 🔒 PROTECTED ROUTES - Only Local Invoices (Login Required)
+  const protectedRoutes = [
     '/invoices/local',
     '/invoices/local/karachi',
-    '/invoices/local/lahore', 
+    '/invoices/local/lahore',
     '/invoices/local/cashbook'
   ];
 
-  const isProtectedRoute = protectedPaths.some(protectedPath => 
+  // Check if current path is protected
+  const isProtectedRoute = protectedRoutes.some(protectedPath => 
     path === protectedPath || path.startsWith(protectedPath + '/')
   );
 
-  // Redirect to login if accessing protected route without session
+  // 🔒 Redirect to login if accessing protected route without session
   if (isProtectedRoute && !session) {
     console.log('❌ No session - redirecting to login');
     const loginUrl = new URL('/login', req.url);
@@ -61,9 +59,9 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Redirect to dashboard if already logged in and trying to access login page
+  // 🔓 Redirect to local invoices if already logged in and trying to access login page
   if (path === '/login' && session) {
-    console.log('✅ Already logged in - redirecting to dashboard');
+    console.log('✅ Already logged in - redirecting to local invoices');
     return NextResponse.redirect(new URL('/invoices/local', req.url));
   }
 
@@ -71,9 +69,10 @@ export async function middleware(req: NextRequest) {
   return response;
 }
 
+// Only run middleware on these paths
 export const config = {
   matcher: [
-    '/invoices/local/:path*',
-    '/login'
+    '/invoices/local/:path*',  // Protected
+    '/login'                    // Auth page
   ],
 };

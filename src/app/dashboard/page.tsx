@@ -10,16 +10,13 @@ import {
   DollarSign,
   TrendingUp,
   Users,
-  Package,
   BarChart2
 } from 'lucide-react';
 import Link from 'next/link';
 import Sidebar from '@/components/layout/sidebar';
 import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [stats, setStats] = useState([
     {
       title: 'Total Invoices',
@@ -56,76 +53,72 @@ export default function DashboardPage() {
   useEffect(() => {
     const loadStats = async () => {
       try {
+        // ✅ NO AUTH CHECK - Dashboard is public
+        // Just load data if available
         const { data: { user } } = await supabase.auth.getUser();
 
-        if (!user) {
-          router.push('/login');
-          return;
-        }
+        // If user exists, load their stats
+        if (user) {
+          const { data: invoices, error } = await supabase
+            .from('invoices')
+            .select('*', { head: true, count: 'exact' })
+            .eq('user_id', user.id);
 
-        const { data: invoices, error } = await supabase
-          .from('invoices')
-          .select('*', { head: true, count: 'exact' })
-          .eq('user_id', user.id);
+          if (!error && invoices) {
+            const count = invoices.length;
 
-        if (error) {
-          console.error('Error fetching invoices:', JSON.stringify(error, null, 2));
-          setStats(prevStats => prevStats.map(stat => ({...stat, value: '0'})));
-          setLoading(false);
-          return;
-        }
-
-        if (invoices) {
-          const count = error ? 0 : invoices.length;
-
-          setStats([
-            {
-              title: 'Total Invoices',
-              value: count.toString(),
-              icon: FileText,
-              change: '+0%',
-              color: 'text-blue-600 bg-blue-100'
-            },
-            {
-              title: 'FBR Approved',
-              value: '0',
-              icon: CheckCircle,
-              change: '+0%',
-              color: 'text-green-600 bg-green-100'
-            },
-            {
-              title: 'Pending',
-              value: '0',
-              icon: Clock,
-              change: '0%',
-              color: 'text-yellow-600 bg-yellow-100'
-            },
-            {
-              title: 'Total Revenue',
-              value: 'Rs. 0',
-              icon: DollarSign,
-              change: '+0%',
-              color: 'text-purple-600 bg-purple-100'
-            }
-          ]);
+            setStats([
+              {
+                title: 'Total Invoices',
+                value: count.toString(),
+                icon: FileText,
+                change: '+0%',
+                color: 'text-blue-600 bg-blue-100'
+              },
+              {
+                title: 'FBR Approved',
+                value: '0',
+                icon: CheckCircle,
+                change: '+0%',
+                color: 'text-green-600 bg-green-100'
+              },
+              {
+                title: 'Pending',
+                value: '0',
+                icon: Clock,
+                change: '0%',
+                color: 'text-yellow-600 bg-yellow-100'
+              },
+              {
+                title: 'Total Revenue',
+                value: 'Rs. 0',
+                icon: DollarSign,
+                change: '+0%',
+                color: 'text-purple-600 bg-purple-100'
+              }
+            ]);
+          }
         }
       } catch (error) {
-        console.error('Unexpected error in loadStats:', error);
-        setStats(prevStats => prevStats.map(stat => ({...stat, value: '0'})));
+        console.error('Error loading stats:', error);
+        // Keep default stats
       } finally {
         setLoading(false);
       }
     };
 
     loadStats();
-  }, [router]);
+  }, []);
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Sidebar />
         <div className="md:ml-64 min-h-screen flex items-center justify-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading dashboard...</p>
+          </div>
         </div>
       </div>
     );
@@ -147,7 +140,7 @@ export default function DashboardPage() {
                   Dashboard
                 </h1>
                 <p className="text-sm text-gray-600 mt-1">
-                  Muhammad Shahrukh Accounting Overview
+                  AI Fashion Accounting Overview
                 </p>
               </div>
               <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-500 bg-gray-50 px-3 py-2 rounded-lg ml-14 sm:ml-0">
@@ -201,15 +194,17 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <FileText className="h-5 w-5 text-blue-600" />
-                  Create Invoice
+                  FBR Invoice
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-gray-600 mb-4">
-                  Generate new invoices for your clients
+                  Generate FBR digital invoices
                 </p>
-                <Link href="/invoices/local">
-                  <Button className="w-full">New Invoice</Button>
+                <Link href="/invoices/create">
+                  <Button className="w-full bg-blue-600 hover:bg-blue-700">
+                    Create FBR Invoice
+                  </Button>
                 </Link>
               </CardContent>
             </Card>
@@ -217,17 +212,19 @@ export default function DashboardPage() {
             <Card className="hover:shadow-md transition-shadow">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
-                  <Users className="h-5 w-5 text-green-600" />
-                  Clients
+                  <FileText className="h-5 w-5 text-green-600" />
+                  Local Invoice
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-gray-600 mb-4">
-                  Manage your client database
+                  Manage local ledgers & cash book
                 </p>
-                <Button variant="outline" className="w-full">
-                  View Clients
-                </Button>
+                <Link href="/invoices/local">
+                  <Button className="w-full bg-green-600 hover:bg-green-700">
+                    Open Local Invoices
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
 
@@ -262,9 +259,9 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      Invoice #001 created
+                      Invoice system ready
                     </p>
-                    <p className="text-xs text-gray-500">2 hours ago</p>
+                    <p className="text-xs text-gray-500">Welcome to AI Fashion Accounting</p>
                   </div>
                 </div>
                 
@@ -274,10 +271,38 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">
-                      Payment received
+                      System online
                     </p>
-                    <p className="text-xs text-gray-500">5 hours ago</p>
+                    <p className="text-xs text-gray-500">All features available</p>
                   </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Info Card */}
+          <Card className="mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+            <CardContent className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="bg-blue-100 p-3 rounded-lg">
+                  <Users className="h-6 w-6 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900 mb-2">Getting Started</h3>
+                  <ul className="text-sm text-gray-700 space-y-2">
+                    <li className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-blue-600 rounded-full"></div>
+                      Create FBR digital invoices (no login required)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-blue-600 rounded-full"></div>
+                      Login to access Local Invoices (Karachi, Lahore, Cash Book)
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-blue-600 rounded-full"></div>
+                      All data automatically synced to cloud
+                    </li>
+                  </ul>
                 </div>
               </div>
             </CardContent>

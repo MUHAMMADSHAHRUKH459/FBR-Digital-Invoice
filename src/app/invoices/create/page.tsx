@@ -37,26 +37,26 @@ export default function CreateFBRInvoice() {
   const [invoiceTime] = useState(formatTime(new Date()));
   const [localInvoiceNumber, setLocalInvoiceNumber] = useState('');
 
-  // Buyer Information
+  // Buyer Information - ALL PRE-FILLED VALUES REMOVED
   const [buyerInfo, setBuyerInfo] = useState({
-    buyerNTNCNIC: '3281099',
-    buyerBusinessName: 'M/S EVERNEW TECHNOLOGIES',
-    buyerProvince: 'SINDH',
-    buyerAddress: 'Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South',
+    buyerNTNCNIC: '',
+    buyerBusinessName: '',
+    buyerProvince: '',
+    buyerAddress: '',
     buyerRegistrationType: 'Registered' as 'Registered' | 'Unregistered',
     buyerPhone: '',
     buyerEmail: ''
   });
 
-  // Items State
+  // Items State - ALL PRE-FILLED VALUES REMOVED (except defaults for new items)
   const [items, setItems] = useState<Partial<InvoiceItem>[]>([
     {
-      hsCode: '8471.3010',
-      productDescription: 'USED CHROMEBOOK WITH ADAPTOR CHARGER',
-      rate: '10%',
+      hsCode: '',
+      productDescription: '',
+      rate: '18%',
       uom: 'Numbers, pieces, units',
-      quantity: 435,
-      valueSalesExcludingST: 5586.95,
+      quantity: 1,
+      valueSalesExcludingST: 0,
       fixedNotifiedValueOrRetailPrice: 0,
       salesTaxApplicable: 0,
       salesTaxWithheldAtSource: 0,
@@ -77,7 +77,7 @@ export default function CreateFBRInvoice() {
   const [fbrInvoiceNumber, setFbrInvoiceNumber] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [showForm, setShowForm] = useState(true);
-  const [comments, setComments] = useState('GD # 34845');
+  const [comments, setComments] = useState('');
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
 
@@ -171,7 +171,7 @@ export default function CreateFBRInvoice() {
   // Add new item
   const addItem = () => {
     const newItem: Partial<InvoiceItem> = {
-      hsCode: '8471.3010',
+      hsCode: '',
       productDescription: '',
       rate: '18%',
       uom: 'Numbers, pieces, units',
@@ -224,7 +224,7 @@ export default function CreateFBRInvoice() {
     }
   };
 
-  // Handle Excel Import
+  // Handle Excel Import - MODIFIED TO IMPORT BUYER DETAILS FIRST
   const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -249,10 +249,44 @@ export default function CreateFBRInvoice() {
           return;
         }
         
+        // Check if first row contains buyer information
+        const firstRow = jsonData[0];
+        
+        // EXTRACT BUYER DETAILS FROM EXCEL (START FROM BUYER DETAILS)
+        // Look for buyer information in the first row
+        const buyerData = {
+          buyerNTNCNIC: firstRow['Buyer NTN/CNIC'] || firstRow['NTN'] || firstRow['CNIC'] || firstRow['BuyerID'] || '',
+          buyerBusinessName: firstRow['Buyer Name'] || firstRow['Customer Name'] || firstRow['Business Name'] || '',
+          buyerProvince: firstRow['Province'] || firstRow['Buyer Province'] || firstRow['State'] || '',
+          buyerAddress: firstRow['Address'] || firstRow['Buyer Address'] || firstRow['Customer Address'] || '',
+          buyerRegistrationType: (firstRow['Registration Type'] || firstRow['Reg Type'] || 'Registered') as 'Registered' | 'Unregistered',
+          buyerPhone: firstRow['Phone'] || firstRow['Contact'] || firstRow['Buyer Phone'] || '',
+          buyerEmail: firstRow['Email'] || firstRow['Buyer Email'] || ''
+        };
+        
+        // Set buyer information FIRST
+        setBuyerInfo(prev => ({
+          ...prev,
+          ...buyerData
+        }));
+        
+        // Check if there are comments
+        if (firstRow['Comments'] || firstRow['Remarks'] || firstRow['Notes']) {
+          setComments(firstRow['Comments'] || firstRow['Remarks'] || firstRow['Notes'] || '');
+        }
+        
         // Map Excel data to invoice items
-        const importedItems = jsonData.map((row: any) => {
-          // Handle different possible column names
-          const hsCode = row['HS Code'] || row['HSCode'] || row['hs_code'] || '8471.3010';
+        // Filter out rows that might contain buyer info (based on column names)
+        const itemRows = jsonData.filter(row => {
+          // Keep rows that have item-related data
+          const hasItemData = row['HS Code'] || row['Description'] || row['Product Description'] || 
+                             row['Quantity'] || row['Rate'] || row['Price'];
+          return hasItemData;
+        });
+        
+        const importedItems = itemRows.map((row: any) => {
+          // Handle different possible column names for items
+          const hsCode = row['HS Code'] || row['HSCode'] || row['hs_code'] || '';
           const description = row['Description'] || row['Product Description'] || row['description'] || '';
           const quantity = parseFloat(row['Quantity'] || row['quantity'] || row['Qty'] || 1);
           const rate = parseFloat(row['Rate'] || row['Price'] || row['rate'] || 0);
@@ -265,34 +299,56 @@ export default function CreateFBRInvoice() {
             hsCode: hsCode.toString(),
             productDescription: description.toString(),
             rate: formattedTaxRate,
-            uom: 'Numbers, pieces, units',
+            uom: row['UOM'] || row['Unit'] || 'Numbers, pieces, units',
             quantity: quantity,
             valueSalesExcludingST: rate,
-            fixedNotifiedValueOrRetailPrice: 0,
+            fixedNotifiedValueOrRetailPrice: parseFloat(row['Fixed Price'] || row['Retail Price'] || 0),
             salesTaxApplicable: 0,
-            salesTaxWithheldAtSource: 0,
-            extraTax: 0,
-            furtherTax: 0,
-            sroScheduleNo: '',
-            fedPayable: 0,
-            discount: 0,
-            saleType: 'Goods at standard rate (default)',
-            sroItemSerialNo: '',
+            salesTaxWithheldAtSource: parseFloat(row['Withheld Tax'] || row['Tax Withheld'] || 0),
+            extraTax: parseFloat(row['Extra Tax'] || 0),
+            furtherTax: parseFloat(row['Further Tax'] || 0),
+            sroScheduleNo: row['SRO Schedule'] || row['Schedule No'] || '',
+            fedPayable: parseFloat(row['Advance Tax'] || row['FED'] || 0),
+            discount: parseFloat(row['Discount'] || 0),
+            saleType: row['Sale Type'] || 'Goods at standard rate (default)',
+            sroItemSerialNo: row['SRO Serial'] || row['Serial No'] || '',
             totalValues: 0
           };
         });
         
         // Calculate totals for all items
-        const isRegistered = buyerInfo.buyerRegistrationType === 'Registered';
+        const isRegistered = buyerData.buyerRegistrationType === 'Registered' || buyerInfo.buyerRegistrationType === 'Registered';
         const calculatedItems = importedItems.map(item => 
           calculateInvoiceItemTotals(item, isRegistered)
         );
         
         // Set items
-        setItems(calculatedItems);
+        setItems(calculatedItems.length > 0 ? calculatedItems : [{
+          hsCode: '',
+          productDescription: '',
+          rate: '18%',
+          uom: 'Numbers, pieces, units',
+          quantity: 1,
+          valueSalesExcludingST: 0,
+          fixedNotifiedValueOrRetailPrice: 0,
+          salesTaxApplicable: 0,
+          salesTaxWithheldAtSource: 0,
+          extraTax: 0,
+          furtherTax: 0,
+          sroScheduleNo: '',
+          fedPayable: 0,
+          discount: 0,
+          saleType: 'Goods at standard rate (default)',
+          sroItemSerialNo: '',
+          totalValues: 0
+        }]);
+        
         setShowExcelImport(false);
         
-        alert(`✅ Successfully imported ${importedItems.length} items from Excel!`);
+        // Show success message with details
+        const buyerName = buyerData.buyerBusinessName || 'No buyer name';
+        const itemCount = calculatedItems.length;
+        alert(`✅ Successfully imported:\n• Buyer: ${buyerName}\n• ${itemCount} item(s) from Excel!`);
         
       } catch (parseError) {
         console.error('Parse error:', parseError);
@@ -312,30 +368,48 @@ export default function CreateFBRInvoice() {
   }
 };
 
-// Export: Sample Excel template for users to download
+// Export: Sample Excel template for users to download - UPDATED WITH BUYER DETAILS
  const downloadExcelTemplate = () => {
   const template = [
+    // First row: Buyer Information (optional)
+    {
+      'Buyer NTN/CNIC': '3281099',
+      'Buyer Name': 'M/S EVERNEW TECHNOLOGIES',
+      'Province': 'SINDH',
+      'Address': 'Suit 65 and 76, First Floor, Sasi Arcade, Block 7, Clifton, Karachi South',
+      'Registration Type': 'Registered',
+      'Phone': '03001234567',
+      'Email': 'info@company.com',
+      'Comments': 'GD # 34845'
+    },
+    // Empty row to separate buyer info from items
+    {},
+    // Item headers
     {
       'HS Code': '8471.3010',
       'Description': 'Used Chromebook',
       'Quantity': 10,
       'Rate': 5000,
-      'Tax Rate': '18%'
+      'Tax Rate': '18%',
+      'UOM': 'Numbers, pieces, units',
+      'Discount': 0
     },
     {
       'HS Code': '6109.1000',
       'Description': 'Cotton T-Shirt',
       'Quantity': 50,
       'Rate': 500,
-      'Tax Rate': '10%'
+      'Tax Rate': '10%',
+      'UOM': 'Numbers, pieces, units',
+      'Discount': 100
     }
   ];
   
   const worksheet = XLSX.utils.json_to_sheet(template);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Invoice Items');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Invoice Data');
   
-  XLSX.writeFile(workbook, 'FBR_Invoice_Template.xlsx');
+  XLSX.writeFile(workbook, 'FBR_Invoice_Template_With_Buyer_Details.xlsx');
 };
 
   // Validate Invoice
@@ -459,14 +533,14 @@ export default function CreateFBRInvoice() {
     setBuyerInfo({
       buyerNTNCNIC: '',
       buyerBusinessName: '',
-      buyerProvince: 'SINDH',
+      buyerProvince: '',
       buyerAddress: '',
       buyerRegistrationType: 'Registered',
       buyerPhone: '',
       buyerEmail: ''
     });
     setItems([{
-      hsCode: '8471.3010',
+      hsCode: '',
       productDescription: '',
       rate: '18%',
       uom: 'Numbers, pieces, units',
@@ -597,7 +671,7 @@ export default function CreateFBRInvoice() {
                     <Label className="text-white mb-2 block">Invoice Type</Label>
                     <Select value={invoiceType} onValueChange={(value: any) => setInvoiceType(value)}>
                       <SelectTrigger className="bg-white/20 border-white/30 text-white">
-                        <SelectValue />
+                        <SelectValue placeholder="Select invoice type" />
                       </SelectTrigger>
                       <SelectContent>
                         {INVOICE_TYPES.map(type => (
@@ -630,7 +704,7 @@ export default function CreateFBRInvoice() {
                       <Label className="text-white mb-2 block">Scenario ID (Testing)</Label>
                       <Select value={scenarioId} onValueChange={setScenarioId}>
                         <SelectTrigger className="bg-white/20 border-white/30 text-white">
-                          <SelectValue />
+                          <SelectValue placeholder="Select scenario" />
                         </SelectTrigger>
                         <SelectContent className="max-h-60">
                           {FBR_SCENARIOS.map(scenario => (
@@ -816,26 +890,36 @@ export default function CreateFBRInvoice() {
                   </div>
                   
                   <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h4 className="font-medium text-blue-900 mb-2 text-sm">📋 Required Excel Format:</h4>
+                    <h4 className="font-medium text-blue-900 mb-2 text-sm">📋 Recommended Excel Format:</h4>
                     <div className="text-sm text-blue-800 space-y-1">
-                      <div key="col-a" className="flex items-center gap-2">
-                        <div className="w-24 font-medium">Column A:</div>
+                      <div className="font-semibold mb-1">First Row: Buyer Details (Optional)</div>
+                      <div key="col-buyer-ntn" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column A:</div>
+                        <div>Buyer NTN/CNIC</div>
+                      </div>
+                      <div key="col-buyer-name" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column B:</div>
+                        <div>Buyer Name</div>
+                      </div>
+                      <div className="font-semibold mt-2 mb-1">Following Rows: Items (Required)</div>
+                      <div key="col-hscode" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column A:</div>
                         <div>HS Code</div>
                       </div>
-                      <div key="col-b" className="flex items-center gap-2">
-                        <div className="w-24 font-medium">Column B:</div>
+                      <div key="col-description" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column B:</div>
                         <div>Product Description</div>
                       </div>
-                      <div key="col-c" className="flex items-center gap-2">
-                        <div className="w-24 font-medium">Column C:</div>
+                      <div key="col-quantity" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column C:</div>
                         <div>Quantity</div>
                       </div>
-                      <div key="col-d" className="flex items-center gap-2">
-                        <div className="w-24 font-medium">Column D:</div>
+                      <div key="col-rate" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column D:</div>
                         <div>Rate per unit</div>
                       </div>
-                      <div key="col-e" className="flex items-center gap-2">
-                        <div className="w-24 font-medium">Column E:</div>
+                      <div key="col-tax" className="flex items-center gap-2">
+                        <div className="w-32 font-medium">Column E:</div>
                         <div>Tax Rate (%)</div>
                       </div>
                     </div>
@@ -866,7 +950,7 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={buyerInfo.buyerBusinessName}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerBusinessName: e.target.value })}
-                        placeholder="M/S EVERNEW TECHNOLOGIES"
+                        placeholder="Enter customer/business name"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -876,7 +960,7 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={buyerInfo.buyerNTNCNIC}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerNTNCNIC: e.target.value })}
-                        placeholder="3281099"
+                        placeholder="Enter CNIC or NTN number"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -888,7 +972,7 @@ export default function CreateFBRInvoice() {
                         onValueChange={(value: any) => setBuyerInfo({ ...buyerInfo, buyerRegistrationType: value })}
                       >
                         <SelectTrigger className="focus:ring-2 focus:ring-blue-500">
-                          <SelectValue />
+                          <SelectValue placeholder="Select registration type" />
                         </SelectTrigger>
                         <SelectContent>
                           {REGISTRATION_TYPES.map(type => (
@@ -903,7 +987,7 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={buyerInfo.buyerPhone}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerPhone: e.target.value })}
-                        placeholder="03001234567"
+                        placeholder="Enter phone number"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -913,7 +997,7 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={buyerInfo.buyerAddress}
                         onChange={(e) => setBuyerInfo({ ...buyerInfo, buyerAddress: e.target.value })}
-                        placeholder="Complete address"
+                        placeholder="Enter complete address"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -942,7 +1026,7 @@ export default function CreateFBRInvoice() {
                       <Input
                         value={comments}
                         onChange={(e) => setComments(e.target.value)}
-                        placeholder="GD # 34845"
+                        placeholder="Enter any comments"
                         className="focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
@@ -1009,7 +1093,7 @@ export default function CreateFBRInvoice() {
                                 onValueChange={(value) => updateItem(index, 'hsCode', value)}
                               >
                                 <SelectTrigger className="bg-white">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Select HS Code" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {hsCodeList.map(hs => (
@@ -1026,7 +1110,7 @@ export default function CreateFBRInvoice() {
                               <Input
                                 value={item.productDescription}
                                 onChange={(e) => updateItem(index, 'productDescription', e.target.value)}
-                                placeholder="Product description"
+                                placeholder="Enter product description"
                                 className="bg-white"
                               />
                             </div>
@@ -1040,6 +1124,7 @@ export default function CreateFBRInvoice() {
                                 min="1"
                                 value={item.quantity}
                                 onChange={(e) => updateItem(index, 'quantity', parseFloat(e.target.value) || 1)}
+                                placeholder="Enter quantity"
                                 className="bg-white"
                               />
                             </div>
@@ -1051,7 +1136,7 @@ export default function CreateFBRInvoice() {
                                 onValueChange={(value) => updateItem(index, 'uom', value)}
                               >
                                 <SelectTrigger className="bg-white">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Select unit" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {uomList.map(uom => (
@@ -1071,6 +1156,7 @@ export default function CreateFBRInvoice() {
                                 step="0.01"
                                 value={item.valueSalesExcludingST}
                                 onChange={(e) => updateItem(index, 'valueSalesExcludingST', parseFloat(e.target.value) || 0)}
+                                placeholder="Enter rate"
                                 className="bg-white"
                               />
                             </div>
@@ -1082,7 +1168,7 @@ export default function CreateFBRInvoice() {
                                 onValueChange={(value) => updateItem(index, 'rate', value)}
                               >
                                 <SelectTrigger className="bg-white">
-                                  <SelectValue />
+                                  <SelectValue placeholder="Select tax rate" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {TAX_RATES.map(rate => (
@@ -1109,6 +1195,7 @@ export default function CreateFBRInvoice() {
                                   step="0.01"
                                   value={item.fixedNotifiedValueOrRetailPrice}
                                   onChange={(e) => updateItem(index, 'fixedNotifiedValueOrRetailPrice', parseFloat(e.target.value) || 0)}
+                                  placeholder="Enter fixed price"
                                   className="bg-white text-sm"
                                 />
                               </div>
@@ -1119,6 +1206,7 @@ export default function CreateFBRInvoice() {
                                   step="0.01"
                                   value={item.salesTaxWithheldAtSource}
                                   onChange={(e) => updateItem(index, 'salesTaxWithheldAtSource', parseFloat(e.target.value) || 0)}
+                                  placeholder="Enter withheld tax"
                                   className="bg-white text-sm"
                                 />
                               </div>
@@ -1129,6 +1217,7 @@ export default function CreateFBRInvoice() {
                                   step="0.01"
                                   value={item.extraTax}
                                   onChange={(e) => updateItem(index, 'extraTax', parseFloat(e.target.value) || 0)}
+                                  placeholder="Enter extra tax"
                                   className="bg-white text-sm"
                                 />
                               </div>
@@ -1139,6 +1228,7 @@ export default function CreateFBRInvoice() {
                                   step="0.01"
                                   value={item.discount}
                                   onChange={(e) => updateItem(index, 'discount', parseFloat(e.target.value) || 0)}
+                                  placeholder="Enter discount"
                                   className="bg-white text-sm"
                                 />
                               </div>
@@ -1147,6 +1237,7 @@ export default function CreateFBRInvoice() {
                                 <Input
                                   value={item.sroScheduleNo}
                                   onChange={(e) => updateItem(index, 'sroScheduleNo', e.target.value)}
+                                  placeholder="Enter SRO schedule"
                                   className="bg-white text-sm"
                                 />
                               </div>
@@ -1155,6 +1246,7 @@ export default function CreateFBRInvoice() {
                                 <Input
                                   value={item.sroItemSerialNo}
                                   onChange={(e) => updateItem(index, 'sroItemSerialNo', e.target.value)}
+                                  placeholder="Enter SRO serial"
                                   className="bg-white text-sm"
                                 />
                               </div>

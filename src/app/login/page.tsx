@@ -248,48 +248,8 @@ export default function LoginPage() {
             </div>
 
             {/* Test Login Button */}
-            <button
-              type="button"
-              onClick={handleTestLogin}
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white font-semibold py-3.5 px-4 rounded-lg shadow-lg hover:shadow-xl transition-all disabled:opacity-50 transform hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <span className="flex items-center justify-center gap-2">
-                <CheckCircle className="h-5 w-5" />
-                Quick Test Login
-              </span>
-            </button>
           </form>
-
-          {/* Credentials Info */}
-          <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-            <p className="text-xs font-semibold text-blue-900 mb-2 flex items-center gap-2">
-              <Mail className="h-3.5 w-3.5" />
-              Test Credentials
-            </p>
-            <div className="text-xs text-blue-800 space-y-1 font-mono bg-white/50 p-2 rounded">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-blue-900">Email:</span>
-                <span>admin@aifashion.com</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-blue-900">Password:</span>
-                <span>admin123</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="mt-8 text-center space-y-2">
-          <p className="text-sm text-gray-500 flex items-center justify-center gap-2">
-            <Shield className="h-4 w-4 text-gray-400" />
-            Secured with <span className="font-semibold text-gray-700">Supabase Authentication</span>
-          </p>
-          <p className="text-xs text-gray-400">
-            Protected by industry-standard encryption
-          </p>
-        </div>
+        </div>       
       </div>
     </div>
   );
