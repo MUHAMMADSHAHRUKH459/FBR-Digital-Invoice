@@ -5,13 +5,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle, Calendar, HelpCircle, Download, Eye, Calculator, Building2 } from 'lucide-react';
+import {
+  Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle, 
+  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye
+} from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 
 interface LedgerEntry {
   id: string;
   date: string;
+  party_id: string;
+  party_name: string;
   particulars: string;
   folio: string;
   debit: string;
@@ -23,6 +28,17 @@ interface LedgerEntry {
   updated_at?: string;
 }
 
+interface PartyData {
+  party_id: string;
+  party_name: string;
+  total_debit: number;
+  total_credit: number;
+  balance: number;
+  type: string;
+  transaction_count: number;
+  transactions?: LedgerEntry[];
+}
+
 export default function LahoreLedgerPage() {
   const [currentDate, setCurrentDate] = useState('');
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
@@ -30,69 +46,114 @@ export default function LahoreLedgerPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalEditingId, setModalEditingId] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [balanceView, setBalanceView] = useState<'all' | 'debit' | 'credit'>('all');
-  
+  const [partySuggestions, setPartySuggestions] = useState<PartyData[]>([]);
+  const [showPartySuggestions, setShowPartySuggestions] = useState(false);
+  const [selectedParty, setSelectedParty] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'all' | 'party'>('all');
+  const [showPartyModal, setShowPartyModal] = useState(false);
+  const [selectedPartyData, setSelectedPartyData] = useState<PartyData | null>(null);
+
   const [formData, setFormData] = useState({
     date: '',
+    party_id: '',
+    party_name: '',
     particulars: '',
     folio: '',
     debit: '',
     credit: ''
   });
 
+  const [modalFormData, setModalFormData] = useState<{[key: string]: {
+    date: string;
+    particulars: string;
+    folio: string;
+    debit: string;
+    credit: string;
+  }}>({});
+
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
     setCurrentDate(today);
     setFormData(prev => ({ ...prev, date: today }));
-    
     fetchEntries();
   }, []);
 
-  // Search filter with autocomplete
   useEffect(() => {
-    let filtered = entries;
-
-    // Apply balance view filter
-    if (balanceView === 'debit') {
-      filtered = filtered.filter(e => parseFloat(e.debit) > 0);
-    } else if (balanceView === 'credit') {
-      filtered = filtered.filter(e => parseFloat(e.credit) > 0);
-    }
-
-    // Apply search filter
     if (searchQuery.trim() === '') {
-      setFilteredEntries(filtered);
+      if (selectedParty) {
+        const partyEntries = entries.filter(e => e.party_id === selectedParty);
+        setFilteredEntries(partyEntries);
+      } else {
+        setFilteredEntries(entries);
+      }
       setSuggestions([]);
       setShowSuggestions(false);
     } else {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(entry => 
+      const filtered = entries.filter(entry =>
+        entry.party_id.toLowerCase().includes(query) ||
+        entry.party_name.toLowerCase().includes(query) ||
         entry.particulars.toLowerCase().includes(query) ||
         entry.folio.toLowerCase().includes(query)
       );
       setFilteredEntries(filtered);
 
-      // Generate suggestions
-      const uniqueParticulars = [...new Set(
-        entries
-          .map(e => e.particulars)
-          .filter(p => p.toLowerCase().includes(query))
-      )].slice(0, 5);
-      
-      setSuggestions(uniqueParticulars);
-      setShowSuggestions(uniqueParticulars.length > 0);
+      const uniqueSuggestions = [...new Set([
+        ...entries.filter(e => e.party_id.toLowerCase().includes(query)).map(e => `${e.party_id} - ${e.party_name}`),
+        ...entries.filter(e => e.party_name.toLowerCase().includes(query)).map(e => `${e.party_id} - ${e.party_name}`),
+        ...entries.filter(e => e.particulars.toLowerCase().includes(query)).map(e => e.particulars)
+      ])].slice(0, 8);
+
+      setSuggestions(uniqueSuggestions);
+      setShowSuggestions(uniqueSuggestions.length > 0);
     }
-  }, [searchQuery, entries, balanceView]);
+  }, [searchQuery, entries, selectedParty]);
+
+  useEffect(() => {
+    if (formData.party_name.trim() === '') {
+      setPartySuggestions([]);
+      setShowPartySuggestions(false);
+      return;
+    }
+
+    const query = formData.party_name.toLowerCase();
+    const partyMap = new Map<string, PartyData>();
+
+    entries.forEach(entry => {
+      if (entry.party_name.toLowerCase().includes(query)) {
+        const key = entry.party_id;
+        if (!partyMap.has(key)) {
+          const partyEntries = entries.filter(e => e.party_id === key);
+          const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+          const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+          const balance = totalDebit - totalCredit;
+
+          partyMap.set(key, {
+            party_id: entry.party_id,
+            party_name: entry.party_name,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            balance: Math.abs(balance),
+            type: balance >= 0 ? 'Dr' : 'Cr',
+            transaction_count: partyEntries.length
+          });
+        }
+      }
+    });
+
+    setPartySuggestions(Array.from(partyMap.values()).slice(0, 5));
+    setShowPartySuggestions(partyMap.size > 0);
+  }, [formData.party_name, entries]);
 
   const fetchEntries = async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       if (!user) {
         showNotification('Please login first!', 'error');
         return;
@@ -110,6 +171,8 @@ export default function LahoreLedgerPage() {
       const formattedData = data?.map(item => ({
         id: item.id,
         date: item.date,
+        party_id: item.party_id || '',
+        party_name: item.party_name || '',
         particulars: item.particulars,
         folio: item.folio || '',
         debit: item.debit.toString(),
@@ -131,20 +194,62 @@ export default function LahoreLedgerPage() {
     }
   };
 
+  const generateNextPartyId = (): string => {
+    if (entries.length === 0) return '001';
+
+    const partyIds = entries
+      .map(e => e.party_id)
+      .filter(id => id && /^\d{3}$/.test(id))
+      .map(id => parseInt(id));
+
+    if (partyIds.length === 0) return '001';
+
+    const maxId = Math.max(...partyIds);
+    const nextId = maxId + 1;
+    return nextId.toString().padStart(3, '0');
+  };
+
   const calculateBalance = (allEntries: LedgerEntry[]): LedgerEntry[] => {
     let runningBalance = 0;
-    
+
     return allEntries.map((entry) => {
       const debit = parseFloat(entry.debit) || 0;
       const credit = parseFloat(entry.credit) || 0;
-      
+
       runningBalance += debit - credit;
-      
+
       return {
         ...entry,
         balance: Math.abs(runningBalance).toFixed(2),
         type: runningBalance >= 0 ? 'Dr' : 'Cr'
       };
+    });
+  };
+
+  const calculatePartyBalance = (partyId: string): LedgerEntry[] => {
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    let runningBalance = 0;
+
+    return partyEntries.map((entry) => {
+      const debit = parseFloat(entry.debit) || 0;
+      const credit = parseFloat(entry.credit) || 0;
+
+      runningBalance += debit - credit;
+
+      return {
+        ...entry,
+        balance: Math.abs(runningBalance).toFixed(2),
+        type: runningBalance >= 0 ? 'Dr' : 'Cr'
+      };
+    });
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-PK', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
     });
   };
 
@@ -158,6 +263,11 @@ export default function LahoreLedgerPage() {
   };
 
   const addEntry = async () => {
+    if (!formData.party_name.trim()) {
+      showNotification('Please enter party name!', 'error');
+      return;
+    }
+
     if (!formData.particulars.trim()) {
       showNotification('Please enter particulars!', 'error');
       return;
@@ -171,22 +281,32 @@ export default function LahoreLedgerPage() {
       return;
     }
 
-    if (debitVal > 0 && creditVal > 0) {
-      showNotification('Please enter only one amount (either Debit OR Credit)', 'error');
-      return;
-    }
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
+
+      let partyId = formData.party_id;
+      if (!partyId) {
+        const existingParty = entries.find(e => 
+          e.party_name.toLowerCase() === formData.party_name.toLowerCase()
+        );
+        
+        if (existingParty) {
+          partyId = existingParty.party_id;
+        } else {
+          partyId = generateNextPartyId();
+        }
+      }
 
       const { error } = await supabase
         .from('lahore_ledger')
         .insert([{
           user_id: user.id,
           date: formData.date,
+          party_id: partyId,
+          party_name: formData.party_name,
           particulars: formData.particulars,
-          folio: formData.folio || `LH-${entries.length + 1}`,
+          folio: formData.folio,
           debit: debitVal,
           credit: creditVal,
           balance: 0,
@@ -199,6 +319,8 @@ export default function LahoreLedgerPage() {
 
       setFormData({
         date: currentDate,
+        party_id: '',
+        party_name: '',
         particulars: '',
         folio: '',
         debit: '',
@@ -215,6 +337,11 @@ export default function LahoreLedgerPage() {
   const updateEntry = async () => {
     if (!editingId) return;
 
+    if (!formData.party_name.trim()) {
+      showNotification('Please enter party name!', 'error');
+      return;
+    }
+
     if (!formData.particulars.trim()) {
       showNotification('Please enter particulars!', 'error');
       return;
@@ -228,6 +355,8 @@ export default function LahoreLedgerPage() {
         .from('lahore_ledger')
         .update({
           date: formData.date,
+          party_id: formData.party_id,
+          party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
           debit: debitVal,
@@ -239,14 +368,65 @@ export default function LahoreLedgerPage() {
       if (error) throw error;
 
       await fetchEntries();
-      
+
       setEditingId(null);
       setFormData({
         date: currentDate,
+        party_id: '',
+        party_name: '',
         particulars: '',
         folio: '',
         debit: '',
         credit: ''
+      });
+
+      showNotification('Entry updated successfully!', 'success');
+    } catch (error: any) {
+      console.error('Error updating entry:', error);
+      showNotification('Failed to update entry: ' + error.message, 'error');
+    }
+  };
+
+  const updateModalEntry = async (entryId: string) => {
+    const formDataForEntry = modalFormData[entryId];
+    if (!formDataForEntry) return;
+
+    if (!formDataForEntry.particulars.trim()) {
+      showNotification('Please enter particulars!', 'error');
+      return;
+    }
+
+    const debitVal = parseFloat(formDataForEntry.debit) || 0;
+    const creditVal = parseFloat(formDataForEntry.credit) || 0;
+
+    try {
+      const { error } = await supabase
+        .from('lahore_ledger')
+        .update({
+          date: formDataForEntry.date,
+          particulars: formDataForEntry.particulars,
+          folio: formDataForEntry.folio,
+          debit: debitVal,
+          credit: creditVal,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', entryId);
+
+      if (error) throw error;
+
+      await fetchEntries();
+      
+      // Refresh modal data
+      if (selectedPartyData) {
+        const partyId = selectedPartyData.party_id;
+        setTimeout(() => openPartyModal(partyId), 100);
+      }
+
+      setModalEditingId(null);
+      setModalFormData(prev => {
+        const newData = { ...prev };
+        delete newData[entryId];
+        return newData;
       });
 
       showNotification('Entry updated successfully!', 'success');
@@ -268,6 +448,18 @@ export default function LahoreLedgerPage() {
       if (error) throw error;
 
       await fetchEntries();
+      
+      // Refresh modal if open
+      if (showPartyModal && selectedPartyData) {
+        const partyId = selectedPartyData.party_id;
+        const remainingEntries = entries.filter(e => e.party_id === partyId && e.id !== id);
+        if (remainingEntries.length > 0) {
+          setTimeout(() => openPartyModal(partyId), 100);
+        } else {
+          setShowPartyModal(false);
+        }
+      }
+      
       showNotification('Entry deleted successfully!', 'success');
     } catch (error: any) {
       console.error('Error deleting entry:', error);
@@ -279,18 +471,50 @@ export default function LahoreLedgerPage() {
     setEditingId(entry.id);
     setFormData({
       date: entry.date,
+      party_id: entry.party_id,
+      party_name: entry.party_name,
       particulars: entry.particulars,
       folio: entry.folio,
       debit: entry.debit,
       credit: entry.credit
     });
+    
+    if (showPartyModal) {
+      setShowPartyModal(false);
+    }
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const startModalEdit = (entry: LedgerEntry) => {
+    setModalEditingId(entry.id);
+    setModalFormData(prev => ({
+      ...prev,
+      [entry.id]: {
+        date: entry.date,
+        particulars: entry.particulars,
+        folio: entry.folio,
+        debit: entry.debit,
+        credit: entry.credit
+      }
+    }));
+  };
+
+  const cancelModalEdit = (entryId: string) => {
+    setModalEditingId(null);
+    setModalFormData(prev => {
+      const newData = { ...prev };
+      delete newData[entryId];
+      return newData;
+    });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setFormData({
       date: currentDate,
+      party_id: '',
+      party_name: '',
       particulars: '',
       folio: '',
       debit: '',
@@ -298,11 +522,58 @@ export default function LahoreLedgerPage() {
     });
   };
 
+  const selectPartyFromSuggestion = (party: PartyData) => {
+    setFormData({
+      ...formData,
+      party_id: party.party_id,
+      party_name: party.party_name
+    });
+    setShowPartySuggestions(false);
+  };
+
+  const viewPartyLedger = (partyId: string) => {
+    setSelectedParty(partyId);
+    setViewMode('party');
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    setFilteredEntries(partyEntries);
+    setSearchQuery('');
+    window.scrollTo({ top: 400, behavior: 'smooth' });
+  };
+
+  const openPartyModal = (partyId: string) => {
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+    const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+    const balance = totalDebit - totalCredit;
+
+    const partyData: PartyData = {
+      party_id: partyId,
+      party_name: partyEntries[0]?.party_name || '',
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      balance: Math.abs(balance),
+      type: balance >= 0 ? 'Dr' : 'Cr',
+      transaction_count: partyEntries.length,
+      transactions: calculatePartyBalance(partyId)
+    };
+
+    setSelectedPartyData(partyData);
+    setShowPartyModal(true);
+    setModalEditingId(null);
+    setModalFormData({});
+  };
+
+  const clearPartyFilter = () => {
+    setSelectedParty(null);
+    setViewMode('all');
+    setFilteredEntries(entries);
+  };
+
   const getTotals = () => {
     const totalDebit = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.debit) || 0), 0);
     const totalCredit = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.credit) || 0), 0);
     const finalBalance = totalDebit - totalCredit;
-    
+
     return {
       totalDebit: totalDebit.toFixed(2),
       totalCredit: totalCredit.toFixed(2),
@@ -311,21 +582,39 @@ export default function LahoreLedgerPage() {
     };
   };
 
-  const totals = getTotals();
+  const getPartyList = (): PartyData[] => {
+    const partyMap = new Map<string, PartyData>();
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (editingId) {
-        updateEntry();
-      } else {
-        addEntry();
+    entries.forEach(entry => {
+      const key = entry.party_id;
+      if (!partyMap.has(key) && key) {
+        const partyEntries = entries.filter(e => e.party_id === key);
+        const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+        const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+        const balance = totalDebit - totalCredit;
+
+        partyMap.set(key, {
+          party_id: entry.party_id,
+          party_name: entry.party_name,
+          total_debit: totalDebit,
+          total_credit: totalCredit,
+          balance: Math.abs(balance),
+          type: balance >= 0 ? 'Dr' : 'Cr',
+          transaction_count: partyEntries.length
+        });
       }
-    }
+    });
+
+    return Array.from(partyMap.values()).sort((a, b) => 
+      parseInt(a.party_id) - parseInt(b.party_id)
+    );
   };
 
+  const totals = getTotals();
+  const partyList = getPartyList();
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-amber-50 p-3 sm:p-4 md:p-6">
+    <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
       {/* Success Notification */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in-right">
@@ -333,14 +622,254 @@ export default function LahoreLedgerPage() {
             <CheckCircle2 className="h-6 w-6" />
             <div>
               <p className="font-semibold">Success!</p>
-              <p className="text-sm">Lahore entry saved successfully</p>
+              <p className="text-sm">Entry saved successfully</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Party Transaction Modal */}
+      {showPartyModal && selectedPartyData && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-6 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="bg-white/20 px-3 py-1 rounded-full text-sm font-semibold">
+                    ID: {selectedPartyData.party_id}
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                    selectedPartyData.type === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                  }`}>
+                    {selectedPartyData.type}
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold">{selectedPartyData.party_name}</h2>
+                <p className="text-blue-100 text-sm mt-1">{selectedPartyData.transaction_count} Transactions</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPartyModal(false);
+                  setModalEditingId(null);
+                  setModalFormData({});
+                }}
+                className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-gray-50">
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="h-4 w-4 text-red-600" />
+                  <p className="text-xs text-red-600 font-semibold">Total Debit</p>
+                </div>
+                <p className="text-2xl font-bold text-red-700">Rs. {selectedPartyData.total_debit.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingDown className="h-4 w-4 text-green-600" />
+                  <p className="text-xs text-green-600 font-semibold">Total Credit</p>
+                </div>
+                <p className="text-2xl font-bold text-green-700">Rs. {selectedPartyData.total_credit.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Calendar className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs text-blue-600 font-semibold">Balance ({selectedPartyData.type})</p>
+                </div>
+                <p className="text-2xl font-bold text-blue-700">Rs. {selectedPartyData.balance.toFixed(2)}</p>
+              </div>
+            </div>
+
+            {/* Transaction History */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-blue-600" />
+                Transaction History
+              </h3>
+              
+              <div className="space-y-3">
+                {selectedPartyData.transactions?.map((entry) => (
+                  <div 
+                    key={entry.id}
+                    className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                  >
+                    {modalEditingId === entry.id ? (
+                      // Edit Mode
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs">Date</Label>
+                            <Input
+                              type="date"
+                              value={modalFormData[entry.id]?.date || entry.date}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { particulars: '', folio: '', debit: '', credit: '' }), date: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Folio</Label>
+                            <Input
+                              value={modalFormData[entry.id]?.folio || entry.folio}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', debit: '', credit: '' }), folio: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Particulars</Label>
+                          <Input
+                            value={modalFormData[entry.id]?.particulars || entry.particulars}
+                            onChange={(e) => setModalFormData(prev => ({
+                              ...prev,
+                              [entry.id]: { ...(prev[entry.id] || { date: '', folio: '', debit: '', credit: '' }), particulars: e.target.value }
+                            }))}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs">Debit (Rs.)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={modalFormData[entry.id]?.debit || entry.debit}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', credit: '' }), debit: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Credit (Rs.)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={modalFormData[entry.id]?.credit || entry.credit}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', debit: '' }), credit: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => updateModalEntry(entry.id)}
+                            className="bg-green-600 hover:bg-green-700"
+                            size="sm"
+                          >
+                            <Save className="h-3 w-3 mr-1" />
+                            Save
+                          </Button>
+                          <Button
+                            onClick={() => cancelModalEdit(entry.id)}
+                            variant="outline"
+                            size="sm"
+                          >
+                            <X className="h-3 w-3 mr-1" />
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      // View Mode
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
+                              {formatDate(entry.date)}
+                            </div>
+                            {entry.folio && (
+                              <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                F: {entry.folio}
+                              </div>
+                            )}
+                            <span className={`px-2 py-1 rounded text-xs font-bold ${
+                              entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                            }`}>
+                              {entry.type}
+                            </span>
+                          </div>
+                          
+                          <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+                          
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <span className="text-gray-500">Debit:</span>
+                              <span className="ml-2 font-semibold text-red-600">
+                                {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Credit:</span>
+                              <span className="ml-2 font-semibold text-green-600">
+                                {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Balance:</span>
+                              <span className="ml-2 font-semibold text-blue-600">
+                                Rs. {entry.balance}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => startModalEdit(entry)}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => deleteEntry(entry.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-4 bg-gray-50">
+              <Button
+                onClick={() => {
+                  setShowPartyModal(false);
+                  setModalEditingId(null);
+                  setModalFormData({});
+                }}
+                className="w-full bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-blue-700 hover:to-indigo-800"
+              >
+                Close
+              </Button>
             </div>
           </div>
         </div>
       )}
 
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
-        
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-800 to-teal-900 rounded-2xl shadow-xl p-4 md:p-6 text-white print:rounded-none">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -356,25 +885,18 @@ export default function LahoreLedgerPage() {
                   <Building2 className="h-7 w-7" />
                 </div>
                 <div>
-                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold">AI Fashion LAHORE LEDGER</h1>
-                  <p className="text-emerald-100 text-sm mt-1">{new Date(currentDate).getFullYear()}</p>
+                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold">AI FASHION LAHORE LEDGER</h1>
+                  <p className="text-indigo-100 text-sm mt-1">
+                    {selectedParty ? `Party: ${entries.find(e => e.party_id === selectedParty)?.party_name} (${selectedParty})` : `Lahore - ${new Date(currentDate).getFullYear()}`}
+                  </p>
                 </div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button 
-                onClick={() => setShowHelp(!showHelp)} 
-                size="sm" 
-                variant="outline"
-                className="print:hidden bg-white/10 hover:bg-white/20 border-white/30 text-white"
-              >
-                <HelpCircle className="h-4 w-4 sm:mr-2" />
-                <span className="hidden sm:inline">Help</span>
-              </Button>
-              <Button 
-                onClick={() => window.print()} 
-                size="sm" 
-                className="print:hidden bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+              <Button
+                onClick={() => window.print()}
+                size="sm"
+                className="print:hidden bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
               >
                 <Printer className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">Print</span>
@@ -382,48 +904,10 @@ export default function LahoreLedgerPage() {
             </div>
           </div>
 
-          {/* Help Panel */}
-          {showHelp && (
-            <div className="mt-4 p-5 bg-white/10 rounded-xl backdrop-blur-sm border border-white/20">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-bold">📚 Quick Guide</h3>
-                <Button size="sm" variant="ghost" onClick={() => setShowHelp(false)} className="text-white hover:bg-white/20">
-                  Close
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div className="bg-white/5 p-4 rounded-lg">
-                  <h4 className="font-bold mb-2">💡 Quick Tips</h4>
-                  <ul className="space-y-2 text-gray-200">
-                    <li>• Enter only one amount per entry</li>
-                    <li>• Press Enter to save quickly</li>
-                    <li>• Data syncs to cloud automatically</li>
-                  </ul>
-                </div>
-                <div className="bg-white/5 p-4 rounded-lg">
-                  <h4 className="font-bold mb-2">📝 Accounting Rules</h4>
-                  <ul className="space-y-2 text-gray-200">
-                    <li>• <span className="text-red-300">Debit:</span> Money received</li>
-                    <li>• <span className="text-green-300">Credit:</span> Money paid</li>
-                    <li>• Balance calculates automatically</li>
-                  </ul>
-                </div>
-                <div className="bg-white/5 p-4 rounded-lg">
-                  <h4 className="font-bold mb-2">🛠️ Features</h4>
-                  <ul className="space-y-2 text-gray-200">
-                    <li>• Search with autocomplete</li>
-                    <li>• Filter by Debit/Credit</li>
-                    <li>• Edit and delete entries</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Date and Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 pt-6 border-t border-white/20 print:hidden">
-            <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
-              <Label className="text-white/90 text-sm font-semibold">Current Date:</Label>
+          {/* Date Info */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/30 print:hidden">
+            <div>
+              <Label className="text-sm font-semibold text-white/80">Current Date:</Label>
               <Input
                 type="date"
                 value={currentDate}
@@ -431,21 +915,104 @@ export default function LahoreLedgerPage() {
                   setCurrentDate(e.target.value);
                   setFormData(prev => ({ ...prev, date: e.target.value }));
                 }}
-                className="mt-2 bg-white/20 border-white/30 text-white"
+                className="mt-1 w-full bg-white/10 border-white/30 text-white placeholder-white/70"
               />
             </div>
-            <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
-              <Label className="text-white/90 text-sm font-semibold">Current Month:</Label>
-              <div className="text-2xl font-bold mt-2">
-                {new Date(currentDate).toLocaleString('default', { month: 'long', year: 'numeric' })}
+            <div>
+              <Label className="text-sm font-semibold text-white/80">Total Parties:</Label>
+              <div className="text-lg sm:text-xl font-bold text-indigo-200 mt-1">
+                {partyList.length} Parties Registered
               </div>
-            </div>
-            <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm border border-white/20">
-              <Label className="text-white/90 text-sm font-semibold">Total Entries:</Label>
-              <div className="text-2xl font-bold mt-2">{entries.length} Records</div>
             </div>
           </div>
         </div>
+
+        {/* Party Quick Stats */}
+        {!selectedParty && partyList.length > 0 && (
+          <Card className="print:hidden">
+            <CardHeader className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-4">
+              <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Party Overview ({partyList.length} Parties)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                {partyList.map(party => (
+                  <div
+                    key={party.party_id}
+                    onClick={() => openPartyModal(party.party_id)}
+                    className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-indigo-200 rounded-lg p-4 hover:shadow-lg transition-all cursor-pointer group relative"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1">
+                        <p className="text-xs text-indigo-600 font-semibold">ID: {party.party_id}</p>
+                        <p className="font-bold text-gray-800 text-sm">{party.party_name}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        party.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {party.type}
+                      </span>
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Transactions:</span>
+                        <span className="font-semibold">{party.transaction_count}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-red-600">Debit:</span>
+                        <span className="font-semibold">Rs. {party.total_debit.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-600">Credit:</span>
+                        <span className="font-semibold">Rs. {party.total_credit.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-indigo-200">
+                        <span className="text-gray-800 font-semibold">Balance:</span>
+                        <span className="font-bold text-indigo-700">Rs. {party.balance.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Hover Icon */}
+                    <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-lg">
+                        <Eye className="h-4 w-4" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Selected Party Banner */}
+        {selectedParty && (
+          <Card className="print:hidden bg-gradient-to-r from-green-500 to-emerald-600 text-white">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-6 w-6" />
+                  <div>
+                    <p className="text-sm opacity-90">Viewing Party Ledger</p>
+                    <p className="text-xl font-bold">
+                      {entries.find(e => e.party_id === selectedParty)?.party_name} (ID: {selectedParty})
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={clearPartyFilter}
+                  variant="outline"
+                  className="bg-white/20 hover:bg-white/30 border-white/40 text-white"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Show All
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Search Bar */}
         <Card className="print:hidden">
@@ -454,11 +1021,11 @@ export default function LahoreLedgerPage() {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 z-10" />
               <Input
                 type="text"
-                placeholder="Search by name or folio number..."
+                placeholder="Search by Party ID, Party Name, or Description..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => searchQuery && setShowSuggestions(true)}
-                className="pl-10 pr-10 h-12 border-2 border-gray-300 focus:border-emerald-500"
+                className="pl-10 pr-10 h-12 border-2 border-gray-300 focus:border-indigo-500"
               />
               {searchQuery && (
                 <button
@@ -482,7 +1049,7 @@ export default function LahoreLedgerPage() {
                         setSearchQuery(suggestion);
                         setShowSuggestions(false);
                       }}
-                      className="w-full text-left px-4 py-3 hover:bg-emerald-50 border-b border-gray-200 last:border-b-0"
+                      className="w-full text-left px-4 py-3 hover:bg-indigo-50 border-b border-gray-200 last:border-b-0 transition-colors"
                     >
                       <div className="flex items-center gap-2">
                         <Search className="h-4 w-4 text-gray-400" />
@@ -495,9 +1062,17 @@ export default function LahoreLedgerPage() {
             </div>
             {searchQuery && (
               <div className="flex items-center gap-2 mt-3">
-                <div className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-medium">
+                <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
                   {filteredEntries.length} result(s) found
                 </div>
+                {filteredEntries.length > 0 && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="text-sm text-indigo-600 hover:text-indigo-800 underline"
+                  >
+                    Clear search
+                  </button>
+                )}
               </div>
             )}
           </CardContent>
@@ -505,166 +1080,147 @@ export default function LahoreLedgerPage() {
 
         {/* Add/Edit Entry Form */}
         <Card className="print:hidden">
-          <CardHeader className={`${editingId ? 'bg-green-600' : 'bg-gradient-to-r from-amber-600 to-orange-700'} text-white p-5`}>
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-xl flex items-center gap-2">
-                {editingId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-                {editingId ? 'Edit Lahore Entry' : 'Add New Lahore Transaction'}
-              </CardTitle>
-              <div className="text-sm bg-white/20 px-3 py-1.5 rounded-full">
-                Press <kbd className="bg-white/30 px-2 py-0.5 rounded font-bold">Enter</kbd> to Save
-              </div>
-            </div>
+          <CardHeader className={`${editingId ? 'bg-green-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600'} text-white p-4`}>
+            <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
+              {editingId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+              {editingId ? 'Edit Entry' : 'Add New Entry'}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="p-5 md:p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4" onKeyDown={handleKeyPress}>
+          <CardContent className="p-4 md:pt-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 md:gap-4">
               <div className="lg:col-span-1">
-                <Label className="text-sm font-semibold flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" />
-                  Date
-                </Label>
+                <Label className="text-sm">Date</Label>
                 <Input
                   type="date"
                   value={formData.date}
                   onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  className="mt-2"
+                  className="mt-1"
                 />
               </div>
-              <div className="sm:col-span-2 lg:col-span-2">
-                <Label className="text-sm font-semibold">Particulars *</Label>
+              <div className="relative">
+                <Label className="text-sm">Party ID</Label>
+                <Input
+                  value={formData.party_id}
+                  onChange={(e) => setFormData({ ...formData, party_id: e.target.value })}
+                  placeholder="Auto"
+                  className="mt-1"
+                  maxLength={3}
+                  readOnly={!editingId}
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1 relative">
+                <Label className="text-sm">Party Name *</Label>
+                <Input
+                  value={formData.party_name}
+                  onChange={(e) => setFormData({ ...formData, party_name: e.target.value })}
+                  onFocus={() => formData.party_name && setShowPartySuggestions(true)}
+                  placeholder="Customer name"
+                  className="mt-1"
+                />
+                
+                {/* Party Suggestions Dropdown */}
+                {showPartySuggestions && partySuggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-indigo-300 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                    {partySuggestions.map((party) => (
+                      <button
+                        key={party.party_id}
+                        onClick={() => selectPartyFromSuggestion(party)}
+                        className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-gray-200 last:border-b-0"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">{party.party_name}</p>
+                            <p className="text-xs text-gray-500">ID: {party.party_id} • {party.transaction_count} transactions</p>
+                          </div>
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                            party.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                          }`}>
+                            {party.type} {party.balance.toFixed(0)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1">
+                <Label className="text-sm">Particulars *</Label>
                 <Input
                   value={formData.particulars}
                   onChange={(e) => setFormData({ ...formData, particulars: e.target.value })}
-                  placeholder="Enter description"
-                  className="mt-2"
-                  autoFocus
+                  placeholder="Description"
+                  className="mt-1"
                 />
               </div>
               <div>
-                <Label className="text-sm font-semibold">Folio</Label>
+                <Label className="text-sm">Folio</Label>
                 <Input
                   value={formData.folio}
                   onChange={(e) => setFormData({ ...formData, folio: e.target.value })}
-                  placeholder="LH-001"
-                  className="mt-2"
+                  placeholder="F-001"
+                  className="mt-1"
                 />
               </div>
               <div>
-                <Label className="text-sm font-semibold text-red-600">Debit (Rs.)</Label>
+                <Label className="text-sm">Debit (Rs.)</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.debit}
-                  onChange={(e) => setFormData({ ...formData, debit: e.target.value, credit: e.target.value ? '' : formData.credit })}
+                  onChange={(e) => setFormData({ ...formData, debit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-2 border-red-300 bg-red-50"
+                  className="mt-1"
                 />
-                <p className="text-xs text-gray-500 mt-1">Money In</p>
               </div>
               <div>
-                <Label className="text-sm font-semibold text-green-600">Credit (Rs.)</Label>
+                <Label className="text-sm">Credit (Rs.)</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.credit}
-                  onChange={(e) => setFormData({ ...formData, credit: e.target.value, debit: e.target.value ? '' : formData.debit })}
+                  onChange={(e) => setFormData({ ...formData, credit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-2 border-green-300 bg-green-50"
+                  className="mt-1"
                 />
-                <p className="text-xs text-gray-500 mt-1">Money Out</p>
               </div>
             </div>
-            
-            <div className="flex flex-wrap items-center justify-between gap-4 mt-6 pt-6 border-t">
-              <div className="flex gap-3">
-                {editingId ? (
-                  <>
-                    <Button onClick={updateEntry} className="bg-green-600 hover:bg-green-700">
-                      <Save className="h-4 w-4 mr-2" />
-                      Update Entry
-                    </Button>
-                    <Button onClick={cancelEdit} variant="outline">
-                      <X className="h-4 w-4 mr-2" />
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button onClick={addEntry} className="bg-gradient-to-r from-amber-600 to-orange-700 hover:from-amber-700 hover:to-orange-800">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Entry
+            <div className="flex gap-2 mt-4">
+              {editingId ? (
+                <>
+                  <Button onClick={updateEntry} className="bg-green-600 hover:bg-green-700">
+                    <Save className="h-4 w-4 mr-2" />
+                    Update Entry
                   </Button>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium">Filter:</span>
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                  <Button
-                    size="sm"
-                    variant={balanceView === 'all' ? 'default' : 'ghost'}
-                    onClick={() => setBalanceView('all')}
-                    className={balanceView === 'all' ? 'bg-teal-600' : ''}
-                  >
-                    <Eye className="h-3.5 w-3.5 mr-1.5" />
-                    All
+                  <Button onClick={cancelEdit} variant="outline">
+                    <X className="h-4 w-4 mr-2" />
+                    Cancel
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={balanceView === 'debit' ? 'default' : 'ghost'}
-                    onClick={() => setBalanceView('debit')}
-                    className={balanceView === 'debit' ? 'bg-red-600' : ''}
-                  >
-                    Debit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={balanceView === 'credit' ? 'default' : 'ghost'}
-                    onClick={() => setBalanceView('credit')}
-                    className={balanceView === 'credit' ? 'bg-green-600' : ''}
-                  >
-                    Credit
-                  </Button>
-                </div>
-              </div>
+                </>
+              ) : (
+                <Button onClick={addEntry} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Entry
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {/* Ledger Table */}
-        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="bg-gradient-to-r from-gray-900 to-gray-800 p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Calculator className="h-5 w-5" />
-                  Lahore Transaction Ledger
-                </h2>
-                <p className="text-gray-300 text-sm mt-1">
-                  Showing {filteredEntries.length} of {entries.length} entries
-                </p>
-              </div>
-              {entries.length > 0 && (
-                <div className="bg-white/10 px-4 py-2 rounded-lg">
-                  <span className="text-gray-300 text-sm">Net Balance:</span>
-                  <span className={`ml-2 font-bold text-lg ${totals.finalType === 'Dr' ? 'text-red-300' : 'text-green-300'}`}>
-                    Rs. {totals.finalBalance} {totals.finalType}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-          
+        <div className="bg-white rounded-lg shadow overflow-hidden">
           {loading ? (
             <div className="p-12 text-center">
-              <div className="inline-block w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+              <div className="inline-block w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
               <p className="mt-4 text-gray-600">Loading entries...</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[800px]">
+              <table className="w-full border-collapse min-w-[900px]">
                 <thead>
                   <tr className="bg-gray-800 text-white">
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Date</th>
+                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Party ID</th>
+                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Party Name</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Particulars</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Folio</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
@@ -686,40 +1242,44 @@ export default function LahoreLedgerPage() {
                 <tbody>
                   {filteredEntries.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="border border-gray-300 px-4 py-8 md:py-12 text-center text-gray-500 text-sm">
-                        {searchQuery || balanceView !== 'all' ? (
+                      <td colSpan={10} className="border border-gray-300 px-4 py-8 text-center text-gray-500 text-sm">
+                        {searchQuery || selectedParty ? (
                           <div className="flex flex-col items-center gap-3">
                             <AlertCircle className="h-12 w-12 text-gray-400" />
                             <p className="text-lg font-medium">No entries found</p>
-                            <p className="text-sm">Try adjusting your filters or search criteria</p>
+                            <p className="text-sm">Try adjusting your search criteria</p>
                           </div>
                         ) : (
                           <div className="flex flex-col items-center gap-3">
-                            <Building2 className="h-12 w-12 text-gray-400" />
-                            <p className="text-lg font-medium">No Lahore transactions yet</p>
-                            <p className="text-sm">Add your first transaction using the form above</p>
+                            <Plus className="h-12 w-12 text-gray-400" />
+                            <p className="text-lg font-medium">No entries yet</p>
+                            <p className="text-sm">Add your first transaction above</p>
                           </div>
                         )}
                       </td>
                     </tr>
                   ) : (
                     <>
-                      {calculateBalance(filteredEntries).map((entry, index) => (
-                        <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-amber-50 transition-colors`}>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.date}</td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.particulars}</td>
+                      {(selectedParty ? calculatePartyBalance(selectedParty) : calculateBalance(filteredEntries)).map((entry, index) => (
+                        <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">
+                            <div className="font-medium">{formatDate(entry.date)}</div>
+                          </td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">
-                            <span className="font-mono bg-gray-100 px-2 py-1 rounded">{entry.folio || '-'}</span>
+                            <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-semibold">
+                              {entry.party_id}
+                            </span>
+                          </td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm font-semibold text-gray-700">
+                            {entry.party_name}
+                          </td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.particulars}</td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">{entry.folio || '-'}</td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
+                            {parseFloat(entry.debit) > 0 ? entry.debit : '-'}
                           </td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
-                            {parseFloat(entry.debit) > 0 ? (
-                              <span className="bg-red-50 px-3 py-1 rounded-lg text-red-700 font-bold">{entry.debit}</span>
-                            ) : '-'}
-                          </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
-                            {parseFloat(entry.credit) > 0 ? (
-                              <span className="bg-green-50 px-3 py-1 rounded-lg text-green-700 font-bold">{entry.credit}</span>
-                            ) : '-'}
+                            {parseFloat(entry.credit) > 0 ? entry.credit : '-'}
                           </td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-center font-semibold text-xs md:text-sm">
                             <span className={`px-2 py-1 rounded ${entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
@@ -751,20 +1311,20 @@ export default function LahoreLedgerPage() {
                           </td>
                         </tr>
                       ))}
-                      
+
                       {/* Total Row */}
-                      <tr className="bg-gradient-to-r from-amber-100 to-amber-50 font-bold">
-                        <td colSpan={3} className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right text-sm md:text-lg">
-                          LAHORE TOTAL
+                      <tr className="bg-gradient-to-r from-yellow-300 to-yellow-400 font-bold">
+                        <td colSpan={5} className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right text-sm md:text-lg">
+                          {selectedParty ? `TOTAL (${entries.find(e => e.party_id === selectedParty)?.party_name})` : 'TOTAL'}
                         </td>
                         <td className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right font-mono text-sm md:text-lg">
-                          <span className="bg-red-100 px-4 py-2 rounded-lg text-red-800">{totals.totalDebit}</span>
+                          {totals.totalDebit}
                         </td>
                         <td className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right font-mono text-sm md:text-lg">
-                          <span className="bg-green-100 px-4 py-2 rounded-lg text-green-800">{totals.totalCredit}</span>
+                          {totals.totalCredit}
                         </td>
                         <td className="border-2 border-gray-800 px-2 md:px-4 py-3 text-center text-sm md:text-lg">
-                          <span className={`px-3 py-1 rounded-xl ${totals.finalType === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
+                          <span className={`px-3 py-1 rounded ${totals.finalType === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
                             {totals.finalType}
                           </span>
                         </td>
@@ -779,7 +1339,6 @@ export default function LahoreLedgerPage() {
               </table>
             </div>
           )}
-          
           {filteredEntries.length > 0 && (
             <div className="md:hidden bg-gray-100 px-4 py-2 text-xs text-gray-600 text-center">
               ← Scroll horizontally to view all columns →
@@ -787,67 +1346,40 @@ export default function LahoreLedgerPage() {
           )}
         </div>
 
-        {/* Summary Cards */}
-        {entries.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <div className="bg-gradient-to-br from-red-50 to-white border-2 border-red-300 rounded-2xl p-6 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-gray-900 text-lg">Total Debit</h3>
-                <div className="bg-red-100 p-3 rounded-xl">
-                  <div className="text-red-600 text-xl">💰</div>
+        {/* Summary Section */}
+        {filteredEntries.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-4 md:p-6 print:break-before-page">
+            <h2 className="text-lg md:text-xl font-bold mb-4">
+              {selectedParty ? `Party Summary - ${entries.find(e => e.party_id === selectedParty)?.party_name}` : 'Monthly Summary'}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <TrendingUp className="h-5 w-5 text-red-600" />
+                  <p className="text-xs sm:text-sm text-red-600 font-medium">Total Debit</p>
                 </div>
+                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-red-700">Rs. {totals.totalDebit}</p>
               </div>
-              <p className="text-4xl md:text-5xl font-bold text-red-700 mb-2">Rs. {totals.totalDebit}</p>
-              <p className="text-sm text-gray-600 font-medium">Money received in Lahore</p>
-              <div className="mt-4 text-xs text-gray-500">
-                {entries.filter(e => parseFloat(e.debit) > 0).length} debit entries
-              </div>
-            </div>
-            
-            <div className="bg-gradient-to-br from-green-50 to-white border-2 border-green-300 rounded-2xl p-6 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-gray-900 text-lg">Total Credit</h3>
-                <div className="bg-green-100 p-3 rounded-xl">
-                  <div className="text-green-600 text-xl">💸</div>
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <TrendingDown className="h-5 w-5 text-green-600" />
+                  <p className="text-xs sm:text-sm text-green-600 font-medium">Total Credit</p>
                 </div>
+                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-green-700">Rs. {totals.totalCredit}</p>
               </div>
-              <p className="text-4xl md:text-5xl font-bold text-green-700 mb-2">Rs. {totals.totalCredit}</p>
-              <p className="text-sm text-gray-600 font-medium">Money paid from Lahore</p>
-              <div className="mt-4 text-xs text-gray-500">
-                {entries.filter(e => parseFloat(e.credit) > 0).length} credit entries
-              </div>
-            </div>
-            
-            <div className="bg-gradient-to-br from-teal-50 to-white border-2 border-teal-300 rounded-2xl p-6 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-gray-900 text-lg">Lahore Balance</h3>
-                <div className={`p-3 rounded-xl ${totals.finalType === 'Dr' ? 'bg-red-100' : 'bg-green-100'}`}>
-                  <div className={`text-xl ${totals.finalType === 'Dr' ? 'text-red-600' : 'text-green-600'}`}>⚖️</div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Calendar className="h-5 w-5 text-blue-600" />
+                  <p className="text-xs sm:text-sm text-blue-600 font-medium">Final Balance ({totals.finalType})</p>
                 </div>
-              </div>
-              <p className="text-4xl md:text-5xl font-bold text-teal-800 mb-2">Rs. {totals.finalBalance}</p>
-              <div className="flex items-center gap-3 mt-3">
-                <span className={`px-4 py-2 rounded-full text-sm font-bold ${
-                  totals.finalType === 'Dr' 
-                    ? 'bg-red-100 text-red-800 border border-red-300' 
-                    : 'bg-green-100 text-green-800 border border-green-300'
-                }`}>
-                  {totals.finalType} Balance
-                </span>
+                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-blue-700">Rs. {totals.finalBalance}</p>
               </div>
             </div>
           </div>
         )}
-
-        {/* Footer Note */}
-        <div className="text-center text-sm text-gray-600 py-5 print:hidden border-t mt-6">
-          <p className="font-medium mb-2">💡 <strong>Note:</strong> Lahore Ledger data is securely stored in Supabase cloud.</p>
-          <p className="text-xs">All changes sync automatically. Your data is safe and accessible from any device.</p>
-        </div>
-
       </div>
 
-      {/* Styles */}
+      {/* Print Styles */}
       <style jsx global>{`
         @media print {
           body {
@@ -857,8 +1389,11 @@ export default function LahoreLedgerPage() {
           .print\\:hidden {
             display: none !important;
           }
+          .print\\:break-before-page {
+            page-break-before: always;
+          }
         }
-        
+
         @keyframes slide-in-right {
           from {
             transform: translateX(100%);
@@ -869,7 +1404,7 @@ export default function LahoreLedgerPage() {
             opacity: 1;
           }
         }
-        
+
         .animate-slide-in-right {
           animation: slide-in-right 0.3s ease-out;
         }

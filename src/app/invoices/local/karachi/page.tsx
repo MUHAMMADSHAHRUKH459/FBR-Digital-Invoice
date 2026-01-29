@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle, ShoppingBag, Sparkles, Building2
+  Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle, 
+  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye
 } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -14,6 +15,8 @@ import { supabase } from '@/lib/supabase';
 interface LedgerEntry {
   id: string;
   date: string;
+  party_id: string;
+  party_name: string;
   particulars: string;
   folio: string;
   debit: string;
@@ -25,6 +28,17 @@ interface LedgerEntry {
   updated_at?: string;
 }
 
+interface PartyData {
+  party_id: string;
+  party_name: string;
+  total_debit: number;
+  total_credit: number;
+  balance: number;
+  type: string;
+  transaction_count: number;
+  transactions?: LedgerEntry[];
+}
+
 export default function KarachiLedgerPage() {
   const [currentDate, setCurrentDate] = useState('');
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
@@ -32,52 +46,108 @@ export default function KarachiLedgerPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [modalEditingId, setModalEditingId] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [partySuggestions, setPartySuggestions] = useState<PartyData[]>([]);
+  const [showPartySuggestions, setShowPartySuggestions] = useState(false);
+  const [selectedParty, setSelectedParty] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'all' | 'party'>('all');
+  const [showPartyModal, setShowPartyModal] = useState(false);
+  const [selectedPartyData, setSelectedPartyData] = useState<PartyData | null>(null);
 
   const [formData, setFormData] = useState({
     date: '',
+    party_id: '',
+    party_name: '',
     particulars: '',
     folio: '',
     debit: '',
     credit: ''
   });
 
-  // Load entries on mount
+  const [modalFormData, setModalFormData] = useState<{[key: string]: {
+    date: string;
+    particulars: string;
+    folio: string;
+    debit: string;
+    credit: string;
+  }}>({});
+
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
     setCurrentDate(today);
     setFormData(prev => ({ ...prev, date: today }));
-
     fetchEntries();
   }, []);
 
-  // Search filter with autocomplete
   useEffect(() => {
     if (searchQuery.trim() === '') {
-      setFilteredEntries(entries);
+      if (selectedParty) {
+        const partyEntries = entries.filter(e => e.party_id === selectedParty);
+        setFilteredEntries(partyEntries);
+      } else {
+        setFilteredEntries(entries);
+      }
       setSuggestions([]);
       setShowSuggestions(false);
     } else {
       const query = searchQuery.toLowerCase();
       const filtered = entries.filter(entry =>
+        entry.party_id.toLowerCase().includes(query) ||
+        entry.party_name.toLowerCase().includes(query) ||
         entry.particulars.toLowerCase().includes(query) ||
         entry.folio.toLowerCase().includes(query)
       );
       setFilteredEntries(filtered);
 
-      // Generate suggestions from unique particulars
-      const uniqueParticulars = [...new Set(
-        entries
-          .map(e => e.particulars)
-          .filter(p => p.toLowerCase().includes(query))
-      )].slice(0, 5);
+      const uniqueSuggestions = [...new Set([
+        ...entries.filter(e => e.party_id.toLowerCase().includes(query)).map(e => `${e.party_id} - ${e.party_name}`),
+        ...entries.filter(e => e.party_name.toLowerCase().includes(query)).map(e => `${e.party_id} - ${e.party_name}`),
+        ...entries.filter(e => e.particulars.toLowerCase().includes(query)).map(e => e.particulars)
+      ])].slice(0, 8);
 
-      setSuggestions(uniqueParticulars);
-      setShowSuggestions(uniqueParticulars.length > 0);
+      setSuggestions(uniqueSuggestions);
+      setShowSuggestions(uniqueSuggestions.length > 0);
     }
-  }, [searchQuery, entries]);
+  }, [searchQuery, entries, selectedParty]);
+
+  useEffect(() => {
+    if (formData.party_name.trim() === '') {
+      setPartySuggestions([]);
+      setShowPartySuggestions(false);
+      return;
+    }
+
+    const query = formData.party_name.toLowerCase();
+    const partyMap = new Map<string, PartyData>();
+
+    entries.forEach(entry => {
+      if (entry.party_name.toLowerCase().includes(query)) {
+        const key = entry.party_id;
+        if (!partyMap.has(key)) {
+          const partyEntries = entries.filter(e => e.party_id === key);
+          const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+          const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+          const balance = totalDebit - totalCredit;
+
+          partyMap.set(key, {
+            party_id: entry.party_id,
+            party_name: entry.party_name,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            balance: Math.abs(balance),
+            type: balance >= 0 ? 'Dr' : 'Cr',
+            transaction_count: partyEntries.length
+          });
+        }
+      }
+    });
+
+    setPartySuggestions(Array.from(partyMap.values()).slice(0, 5));
+    setShowPartySuggestions(partyMap.size > 0);
+  }, [formData.party_name, entries]);
 
   const fetchEntries = async () => {
     try {
@@ -101,6 +171,8 @@ export default function KarachiLedgerPage() {
       const formattedData = data?.map(item => ({
         id: item.id,
         date: item.date,
+        party_id: item.party_id || '',
+        party_name: item.party_name || '',
         particulars: item.particulars,
         folio: item.folio || '',
         debit: item.debit.toString(),
@@ -122,6 +194,21 @@ export default function KarachiLedgerPage() {
     }
   };
 
+  const generateNextPartyId = (): string => {
+    if (entries.length === 0) return '001';
+
+    const partyIds = entries
+      .map(e => e.party_id)
+      .filter(id => id && /^\d{3}$/.test(id))
+      .map(id => parseInt(id));
+
+    if (partyIds.length === 0) return '001';
+
+    const maxId = Math.max(...partyIds);
+    const nextId = maxId + 1;
+    return nextId.toString().padStart(3, '0');
+  };
+
   const calculateBalance = (allEntries: LedgerEntry[]): LedgerEntry[] => {
     let runningBalance = 0;
 
@@ -139,6 +226,33 @@ export default function KarachiLedgerPage() {
     });
   };
 
+  const calculatePartyBalance = (partyId: string): LedgerEntry[] => {
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    let runningBalance = 0;
+
+    return partyEntries.map((entry) => {
+      const debit = parseFloat(entry.debit) || 0;
+      const credit = parseFloat(entry.credit) || 0;
+
+      runningBalance += debit - credit;
+
+      return {
+        ...entry,
+        balance: Math.abs(runningBalance).toFixed(2),
+        type: runningBalance >= 0 ? 'Dr' : 'Cr'
+      };
+    });
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-PK', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
+
   const showNotification = (message: string, type: 'success' | 'error') => {
     if (type === 'success') {
       setShowSuccess(true);
@@ -149,6 +263,11 @@ export default function KarachiLedgerPage() {
   };
 
   const addEntry = async () => {
+    if (!formData.party_name.trim()) {
+      showNotification('Please enter party name!', 'error');
+      return;
+    }
+
     if (!formData.particulars.trim()) {
       showNotification('Please enter particulars!', 'error');
       return;
@@ -166,11 +285,26 @@ export default function KarachiLedgerPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
+      let partyId = formData.party_id;
+      if (!partyId) {
+        const existingParty = entries.find(e => 
+          e.party_name.toLowerCase() === formData.party_name.toLowerCase()
+        );
+        
+        if (existingParty) {
+          partyId = existingParty.party_id;
+        } else {
+          partyId = generateNextPartyId();
+        }
+      }
+
       const { error } = await supabase
         .from('karachi_ledger')
         .insert([{
           user_id: user.id,
           date: formData.date,
+          party_id: partyId,
+          party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
           debit: debitVal,
@@ -183,9 +317,10 @@ export default function KarachiLedgerPage() {
 
       await fetchEntries();
 
-      // Reset form
       setFormData({
         date: currentDate,
+        party_id: '',
+        party_name: '',
         particulars: '',
         folio: '',
         debit: '',
@@ -202,6 +337,11 @@ export default function KarachiLedgerPage() {
   const updateEntry = async () => {
     if (!editingId) return;
 
+    if (!formData.party_name.trim()) {
+      showNotification('Please enter party name!', 'error');
+      return;
+    }
+
     if (!formData.particulars.trim()) {
       showNotification('Please enter particulars!', 'error');
       return;
@@ -215,6 +355,8 @@ export default function KarachiLedgerPage() {
         .from('karachi_ledger')
         .update({
           date: formData.date,
+          party_id: formData.party_id,
+          party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
           debit: debitVal,
@@ -230,10 +372,61 @@ export default function KarachiLedgerPage() {
       setEditingId(null);
       setFormData({
         date: currentDate,
+        party_id: '',
+        party_name: '',
         particulars: '',
         folio: '',
         debit: '',
         credit: ''
+      });
+
+      showNotification('Entry updated successfully!', 'success');
+    } catch (error: any) {
+      console.error('Error updating entry:', error);
+      showNotification('Failed to update entry: ' + error.message, 'error');
+    }
+  };
+
+  const updateModalEntry = async (entryId: string) => {
+    const formDataForEntry = modalFormData[entryId];
+    if (!formDataForEntry) return;
+
+    if (!formDataForEntry.particulars.trim()) {
+      showNotification('Please enter particulars!', 'error');
+      return;
+    }
+
+    const debitVal = parseFloat(formDataForEntry.debit) || 0;
+    const creditVal = parseFloat(formDataForEntry.credit) || 0;
+
+    try {
+      const { error } = await supabase
+        .from('karachi_ledger')
+        .update({
+          date: formDataForEntry.date,
+          particulars: formDataForEntry.particulars,
+          folio: formDataForEntry.folio,
+          debit: debitVal,
+          credit: creditVal,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', entryId);
+
+      if (error) throw error;
+
+      await fetchEntries();
+      
+      // Refresh modal data
+      if (selectedPartyData) {
+        const partyId = selectedPartyData.party_id;
+        setTimeout(() => openPartyModal(partyId), 100);
+      }
+
+      setModalEditingId(null);
+      setModalFormData(prev => {
+        const newData = { ...prev };
+        delete newData[entryId];
+        return newData;
       });
 
       showNotification('Entry updated successfully!', 'success');
@@ -255,6 +448,18 @@ export default function KarachiLedgerPage() {
       if (error) throw error;
 
       await fetchEntries();
+      
+      // Refresh modal if open
+      if (showPartyModal && selectedPartyData) {
+        const partyId = selectedPartyData.party_id;
+        const remainingEntries = entries.filter(e => e.party_id === partyId && e.id !== id);
+        if (remainingEntries.length > 0) {
+          setTimeout(() => openPartyModal(partyId), 100);
+        } else {
+          setShowPartyModal(false);
+        }
+      }
+      
       showNotification('Entry deleted successfully!', 'success');
     } catch (error: any) {
       console.error('Error deleting entry:', error);
@@ -266,23 +471,102 @@ export default function KarachiLedgerPage() {
     setEditingId(entry.id);
     setFormData({
       date: entry.date,
+      party_id: entry.party_id,
+      party_name: entry.party_name,
       particulars: entry.particulars,
       folio: entry.folio,
       debit: entry.debit,
       credit: entry.credit
     });
+    
+    if (showPartyModal) {
+      setShowPartyModal(false);
+    }
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const startModalEdit = (entry: LedgerEntry) => {
+    setModalEditingId(entry.id);
+    setModalFormData(prev => ({
+      ...prev,
+      [entry.id]: {
+        date: entry.date,
+        particulars: entry.particulars,
+        folio: entry.folio,
+        debit: entry.debit,
+        credit: entry.credit
+      }
+    }));
+  };
+
+  const cancelModalEdit = (entryId: string) => {
+    setModalEditingId(null);
+    setModalFormData(prev => {
+      const newData = { ...prev };
+      delete newData[entryId];
+      return newData;
+    });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setFormData({
       date: currentDate,
+      party_id: '',
+      party_name: '',
       particulars: '',
       folio: '',
       debit: '',
       credit: ''
     });
+  };
+
+  const selectPartyFromSuggestion = (party: PartyData) => {
+    setFormData({
+      ...formData,
+      party_id: party.party_id,
+      party_name: party.party_name
+    });
+    setShowPartySuggestions(false);
+  };
+
+  const viewPartyLedger = (partyId: string) => {
+    setSelectedParty(partyId);
+    setViewMode('party');
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    setFilteredEntries(partyEntries);
+    setSearchQuery('');
+    window.scrollTo({ top: 400, behavior: 'smooth' });
+  };
+
+  const openPartyModal = (partyId: string) => {
+    const partyEntries = entries.filter(e => e.party_id === partyId);
+    const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+    const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+    const balance = totalDebit - totalCredit;
+
+    const partyData: PartyData = {
+      party_id: partyId,
+      party_name: partyEntries[0]?.party_name || '',
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      balance: Math.abs(balance),
+      type: balance >= 0 ? 'Dr' : 'Cr',
+      transaction_count: partyEntries.length,
+      transactions: calculatePartyBalance(partyId)
+    };
+
+    setSelectedPartyData(partyData);
+    setShowPartyModal(true);
+    setModalEditingId(null);
+    setModalFormData({});
+  };
+
+  const clearPartyFilter = () => {
+    setSelectedParty(null);
+    setViewMode('all');
+    setFilteredEntries(entries);
   };
 
   const getTotals = () => {
@@ -298,7 +582,36 @@ export default function KarachiLedgerPage() {
     };
   };
 
+  const getPartyList = (): PartyData[] => {
+    const partyMap = new Map<string, PartyData>();
+
+    entries.forEach(entry => {
+      const key = entry.party_id;
+      if (!partyMap.has(key) && key) {
+        const partyEntries = entries.filter(e => e.party_id === key);
+        const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+        const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+        const balance = totalDebit - totalCredit;
+
+        partyMap.set(key, {
+          party_id: entry.party_id,
+          party_name: entry.party_name,
+          total_debit: totalDebit,
+          total_credit: totalCredit,
+          balance: Math.abs(balance),
+          type: balance >= 0 ? 'Dr' : 'Cr',
+          transaction_count: partyEntries.length
+        });
+      }
+    });
+
+    return Array.from(partyMap.values()).sort((a, b) => 
+      parseInt(a.party_id) - parseInt(b.party_id)
+    );
+  };
+
   const totals = getTotals();
+  const partyList = getPartyList();
 
   return (
     <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
@@ -315,8 +628,249 @@ export default function KarachiLedgerPage() {
         </div>
       )}
 
+      {/* Party Transaction Modal */}
+      {showPartyModal && selectedPartyData && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-6 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="bg-white/20 px-3 py-1 rounded-full text-sm font-semibold">
+                    ID: {selectedPartyData.party_id}
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${
+                    selectedPartyData.type === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                  }`}>
+                    {selectedPartyData.type}
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold">{selectedPartyData.party_name}</h2>
+                <p className="text-blue-100 text-sm mt-1">{selectedPartyData.transaction_count} Transactions</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPartyModal(false);
+                  setModalEditingId(null);
+                  setModalFormData({});
+                }}
+                className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-gray-50">
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="h-4 w-4 text-red-600" />
+                  <p className="text-xs text-red-600 font-semibold">Total Debit</p>
+                </div>
+                <p className="text-2xl font-bold text-red-700">Rs. {selectedPartyData.total_debit.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingDown className="h-4 w-4 text-green-600" />
+                  <p className="text-xs text-green-600 font-semibold">Total Credit</p>
+                </div>
+                <p className="text-2xl font-bold text-green-700">Rs. {selectedPartyData.total_credit.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Calendar className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs text-blue-600 font-semibold">Balance ({selectedPartyData.type})</p>
+                </div>
+                <p className="text-2xl font-bold text-blue-700">Rs. {selectedPartyData.balance.toFixed(2)}</p>
+              </div>
+            </div>
+
+            {/* Transaction History */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-blue-600" />
+                Transaction History
+              </h3>
+              
+              <div className="space-y-3">
+                {selectedPartyData.transactions?.map((entry) => (
+                  <div 
+                    key={entry.id}
+                    className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                  >
+                    {modalEditingId === entry.id ? (
+                      // Edit Mode
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs">Date</Label>
+                            <Input
+                              type="date"
+                              value={modalFormData[entry.id]?.date || entry.date}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { particulars: '', folio: '', debit: '', credit: '' }), date: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Folio</Label>
+                            <Input
+                              value={modalFormData[entry.id]?.folio || entry.folio}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', debit: '', credit: '' }), folio: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Particulars</Label>
+                          <Input
+                            value={modalFormData[entry.id]?.particulars || entry.particulars}
+                            onChange={(e) => setModalFormData(prev => ({
+                              ...prev,
+                              [entry.id]: { ...(prev[entry.id] || { date: '', folio: '', debit: '', credit: '' }), particulars: e.target.value }
+                            }))}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs">Debit (Rs.)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={modalFormData[entry.id]?.debit || entry.debit}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', credit: '' }), debit: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Credit (Rs.)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={modalFormData[entry.id]?.credit || entry.credit}
+                              onChange={(e) => setModalFormData(prev => ({
+                                ...prev,
+                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', debit: '' }), credit: e.target.value }
+                              }))}
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => updateModalEntry(entry.id)}
+                            className="bg-green-600 hover:bg-green-700"
+                            size="sm"
+                          >
+                            <Save className="h-3 w-3 mr-1" />
+                            Save
+                          </Button>
+                          <Button
+                            onClick={() => cancelModalEdit(entry.id)}
+                            variant="outline"
+                            size="sm"
+                          >
+                            <X className="h-3 w-3 mr-1" />
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      // View Mode
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
+                              {formatDate(entry.date)}
+                            </div>
+                            {entry.folio && (
+                              <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                F: {entry.folio}
+                              </div>
+                            )}
+                            <span className={`px-2 py-1 rounded text-xs font-bold ${
+                              entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                            }`}>
+                              {entry.type}
+                            </span>
+                          </div>
+                          
+                          <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+                          
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <span className="text-gray-500">Debit:</span>
+                              <span className="ml-2 font-semibold text-red-600">
+                                {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Credit:</span>
+                              <span className="ml-2 font-semibold text-green-600">
+                                {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Balance:</span>
+                              <span className="ml-2 font-semibold text-blue-600">
+                                Rs. {entry.balance}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => startModalEdit(entry)}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => deleteEntry(entry.id)}
+                            className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-4 bg-gray-50">
+              <Button
+                onClick={() => {
+                  setShowPartyModal(false);
+                  setModalEditingId(null);
+                  setModalFormData({});
+                }}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
-        {/* Personalized Header */}
+        {/* Header */}
         <div className="bg-gradient-to-r from-blue-800 to-indigo-900 rounded-2xl shadow-xl p-4 md:p-6 text-white print:rounded-none">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
             <div className="flex items-center gap-3">
@@ -332,7 +886,9 @@ export default function KarachiLedgerPage() {
                 </div>
                 <div>
                   <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold">AI FASHION KARACHI LEDGER</h1>
-                  <p className="text-indigo-100 text-sm mt-1">Karachi - {new Date(currentDate).getFullYear()}</p>
+                  <p className="text-indigo-100 text-sm mt-1">
+                    {selectedParty ? `Party: ${entries.find(e => e.party_id === selectedParty)?.party_name} (${selectedParty})` : `Karachi - ${new Date(currentDate).getFullYear()}`}
+                  </p>
                 </div>
               </div>
             </div>
@@ -363,22 +919,109 @@ export default function KarachiLedgerPage() {
               />
             </div>
             <div>
-              <Label className="text-sm font-semibold text-white/80">Month:</Label>
+              <Label className="text-sm font-semibold text-white/80">Total Parties:</Label>
               <div className="text-lg sm:text-xl font-bold text-indigo-200 mt-1">
-                {new Date(currentDate).toLocaleString('default', { month: 'long', year: 'numeric' })}
+                {partyList.length} Parties Registered
               </div>
             </div>
           </div>
         </div>
 
-        {/* Search Bar with Autocomplete */}
+        {/* Party Quick Stats */}
+        {!selectedParty && partyList.length > 0 && (
+          <Card className="print:hidden">
+            <CardHeader className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-4">
+              <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Party Overview ({partyList.length} Parties)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                {partyList.map(party => (
+                  <div
+                    key={party.party_id}
+                    onClick={() => openPartyModal(party.party_id)}
+                    className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-indigo-200 rounded-lg p-4 hover:shadow-lg transition-all cursor-pointer group relative"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1">
+                        <p className="text-xs text-indigo-600 font-semibold">ID: {party.party_id}</p>
+                        <p className="font-bold text-gray-800 text-sm">{party.party_name}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        party.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {party.type}
+                      </span>
+                    </div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Transactions:</span>
+                        <span className="font-semibold">{party.transaction_count}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-red-600">Debit:</span>
+                        <span className="font-semibold">Rs. {party.total_debit.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-600">Credit:</span>
+                        <span className="font-semibold">Rs. {party.total_credit.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-indigo-200">
+                        <span className="text-gray-800 font-semibold">Balance:</span>
+                        <span className="font-bold text-indigo-700">Rs. {party.balance.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    
+                    {/* Hover Icon */}
+                    <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-lg">
+                        <Eye className="h-4 w-4" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Selected Party Banner */}
+        {selectedParty && (
+          <Card className="print:hidden bg-gradient-to-r from-green-500 to-emerald-600 text-white">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-6 w-6" />
+                  <div>
+                    <p className="text-sm opacity-90">Viewing Party Ledger</p>
+                    <p className="text-xl font-bold">
+                      {entries.find(e => e.party_id === selectedParty)?.party_name} (ID: {selectedParty})
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={clearPartyFilter}
+                  variant="outline"
+                  className="bg-white/20 hover:bg-white/30 border-white/40 text-white"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Show All
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Search Bar */}
         <Card className="print:hidden">
           <CardContent className="pt-6">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 z-10" />
               <Input
                 type="text"
-                placeholder="Search by name or folio number..."
+                placeholder="Search by Party ID, Party Name, or Description..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => searchQuery && setShowSuggestions(true)}
@@ -454,12 +1097,58 @@ export default function KarachiLedgerPage() {
                   className="mt-1"
                 />
               </div>
-              <div className="sm:col-span-2 lg:col-span-2">
+              <div className="relative">
+                <Label className="text-sm">Party ID</Label>
+                <Input
+                  value={formData.party_id}
+                  onChange={(e) => setFormData({ ...formData, party_id: e.target.value })}
+                  placeholder="Auto"
+                  className="mt-1"
+                  maxLength={3}
+                  readOnly={!editingId}
+                />
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1 relative">
+                <Label className="text-sm">Party Name *</Label>
+                <Input
+                  value={formData.party_name}
+                  onChange={(e) => setFormData({ ...formData, party_name: e.target.value })}
+                  onFocus={() => formData.party_name && setShowPartySuggestions(true)}
+                  placeholder="Customer name"
+                  className="mt-1"
+                />
+                
+                {/* Party Suggestions Dropdown */}
+                {showPartySuggestions && partySuggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-indigo-300 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                    {partySuggestions.map((party) => (
+                      <button
+                        key={party.party_id}
+                        onClick={() => selectPartyFromSuggestion(party)}
+                        className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-gray-200 last:border-b-0"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800">{party.party_name}</p>
+                            <p className="text-xs text-gray-500">ID: {party.party_id} • {party.transaction_count} transactions</p>
+                          </div>
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                            party.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                          }`}>
+                            {party.type} {party.balance.toFixed(0)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="sm:col-span-2 lg:col-span-1">
                 <Label className="text-sm">Particulars *</Label>
                 <Input
                   value={formData.particulars}
                   onChange={(e) => setFormData({ ...formData, particulars: e.target.value })}
-                  placeholder="Enter description"
+                  placeholder="Description"
                   className="mt-1"
                 />
               </div>
@@ -526,10 +1215,12 @@ export default function KarachiLedgerPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[800px]">
+              <table className="w-full border-collapse min-w-[900px]">
                 <thead>
                   <tr className="bg-gray-800 text-white">
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Date</th>
+                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Party ID</th>
+                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Party Name</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Particulars</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Folio</th>
                     <th className="border border-gray-600 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
@@ -551,8 +1242,8 @@ export default function KarachiLedgerPage() {
                 <tbody>
                   {filteredEntries.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="border border-gray-300 px-4 py-8 text-center text-gray-500 text-sm">
-                        {searchQuery ? (
+                      <td colSpan={10} className="border border-gray-300 px-4 py-8 text-center text-gray-500 text-sm">
+                        {searchQuery || selectedParty ? (
                           <div className="flex flex-col items-center gap-3">
                             <AlertCircle className="h-12 w-12 text-gray-400" />
                             <p className="text-lg font-medium">No entries found</p>
@@ -569,9 +1260,19 @@ export default function KarachiLedgerPage() {
                     </tr>
                   ) : (
                     <>
-                      {calculateBalance(filteredEntries).map((entry, index) => (
+                      {(selectedParty ? calculatePartyBalance(selectedParty) : calculateBalance(filteredEntries)).map((entry, index) => (
                         <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.date}</td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">
+                            <div className="font-medium">{formatDate(entry.date)}</div>
+                          </td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">
+                            <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-semibold">
+                              {entry.party_id}
+                            </span>
+                          </td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm font-semibold text-gray-700">
+                            {entry.party_name}
+                          </td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.particulars}</td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">{entry.folio || '-'}</td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
@@ -613,8 +1314,8 @@ export default function KarachiLedgerPage() {
 
                       {/* Total Row */}
                       <tr className="bg-gradient-to-r from-yellow-300 to-yellow-400 font-bold">
-                        <td colSpan={3} className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right text-sm md:text-lg">
-                          TOTAL
+                        <td colSpan={5} className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right text-sm md:text-lg">
+                          {selectedParty ? `TOTAL (${entries.find(e => e.party_id === selectedParty)?.party_name})` : 'TOTAL'}
                         </td>
                         <td className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right font-mono text-sm md:text-lg">
                           {totals.totalDebit}
@@ -648,18 +1349,29 @@ export default function KarachiLedgerPage() {
         {/* Summary Section */}
         {filteredEntries.length > 0 && (
           <div className="bg-white rounded-lg shadow p-4 md:p-6 print:break-before-page">
-            <h2 className="text-lg md:text-xl font-bold mb-4">Monthly Summary</h2>
+            <h2 className="text-lg md:text-xl font-bold mb-4">
+              {selectedParty ? `Party Summary - ${entries.find(e => e.party_id === selectedParty)?.party_name}` : 'Monthly Summary'}
+            </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
               <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <p className="text-xs sm:text-sm text-red-600 mb-1 font-medium">Total Debit</p>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <TrendingUp className="h-5 w-5 text-red-600" />
+                  <p className="text-xs sm:text-sm text-red-600 font-medium">Total Debit</p>
+                </div>
                 <p className="text-xl sm:text-2xl md:text-3xl font-bold text-red-700">Rs. {totals.totalDebit}</p>
               </div>
               <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <p className="text-xs sm:text-sm text-green-600 mb-1 font-medium">Total Credit</p>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <TrendingDown className="h-5 w-5 text-green-600" />
+                  <p className="text-xs sm:text-sm text-green-600 font-medium">Total Credit</p>
+                </div>
                 <p className="text-xl sm:text-2xl md:text-3xl font-bold text-green-700">Rs. {totals.totalCredit}</p>
               </div>
               <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <p className="text-xs sm:text-sm text-blue-600 mb-1 font-medium">Final Balance ({totals.finalType})</p>
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <Calendar className="h-5 w-5 text-blue-600" />
+                  <p className="text-xs sm:text-sm text-blue-600 font-medium">Final Balance ({totals.finalType})</p>
+                </div>
                 <p className="text-xl sm:text-2xl md:text-3xl font-bold text-blue-700">Rs. {totals.finalBalance}</p>
               </div>
             </div>
