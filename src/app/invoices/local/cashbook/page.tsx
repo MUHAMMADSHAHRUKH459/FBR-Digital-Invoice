@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Plus, Trash2, Printer, ArrowLeft, Save, TrendingUp, TrendingDown, Edit2, Search, X, CheckCircle2, AlertCircle, ShoppingBag, Sparkles
+  Plus, Trash2, Printer, ArrowLeft, Save, TrendingUp, TrendingDown, Edit2, Search, X, CheckCircle2, AlertCircle, ShoppingBag, Sparkles, Wallet, History, Receipt
 } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -18,9 +18,24 @@ interface CashEntry {
   personName: string;
   ledgerFolio: string;
   amount: string;
+  cityReference: string;
+  particulars: string;
   user_id?: string;
   created_at?: string;
   updated_at?: string;
+  source?: string;
+  linked_transaction_id?: string;
+  is_cashbook_entry?: boolean;
+}
+
+interface PersonHistory {
+  date: string;
+  particulars: string;
+  amount: number;
+  type: 'receipt' | 'payment' | 'ledger_debit' | 'ledger_credit';
+  source: 'CASHBOOK' | 'LEDGER';
+  folio?: string;
+  city?: string;
 }
 
 export default function CashBookPage() {
@@ -34,25 +49,33 @@ export default function CashBookPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showPersonHistory, setShowPersonHistory] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const [personHistory, setPersonHistory] = useState<PersonHistory[]>([]);
+  const [personSummary, setPersonSummary] = useState<{
+    totalReceipts: number;
+    totalPayments: number;
+    ledgerDebit: number;
+    ledgerCredit: number;
+    netBalance: number;
+  }>({ totalReceipts: 0, totalPayments: 0, ledgerDebit: 0, ledgerCredit: 0, netBalance: 0 });
 
   const [formData, setFormData] = useState({
     date: '',
     type: 'receipt' as 'receipt' | 'payment',
     personName: '',
     ledgerFolio: '',
-    amount: ''
+    amount: '',
+    cityReference: 'Karachi'
   });
 
-  // Load entries on mount
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
     setCurrentDate(today);
     setFormData(prev => ({ ...prev, date: today }));
-
     fetchEntries();
   }, []);
 
-  // Search filter with autocomplete
   useEffect(() => {
     if (searchQuery.trim() === '') {
       setFilteredEntries(entries);
@@ -66,7 +89,6 @@ export default function CashBookPage() {
       );
       setFilteredEntries(filtered);
 
-      // Generate suggestions from unique person names
       const uniqueNames = [...new Set(
         entries
           .map(e => e.personName)
@@ -79,45 +101,51 @@ export default function CashBookPage() {
   }, [searchQuery, entries]);
 
   const fetchEntries = async () => {
-    try {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+  try {
+    setLoading(true);
+    const { data: { user } } = await supabase.auth.getUser();
 
-      if (!user) {
-        showNotification('Please login first!', 'error');
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('cashbook')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('date', { ascending: true })
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-
-      const formattedData = data?.map(item => ({
-        id: item.id,
-        date: item.date,
-        type: item.type,
-        personName: item.person_name,
-        ledgerFolio: item.ledger_folio || '',
-        amount: parseFloat(item.amount).toFixed(2),
-        user_id: item.user_id,
-        created_at: item.created_at,
-        updated_at: item.updated_at
-      })) || [];
-
-      setEntries(formattedData);
-      setFilteredEntries(formattedData);
-    } catch (error: any) {
-      console.error('Error fetching entries:', error);
-      showNotification('Failed to load entries: ' + error.message, 'error');
-    } finally {
-      setLoading(false);
+    if (!user) {
+      showNotification('Please login first!', 'error');
+      return;
     }
-  };
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('source', 'CASHBOOK')
+      .order('date', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    const formattedData = data?.map(item => ({
+      id: item.id,
+      date: item.date,
+      type: (item.type === 'CREDIT' ? 'receipt' : 'payment') as 'receipt' | 'payment', // ✅ Type cast karein
+      personName: item.party_name,
+      ledgerFolio: item.folio || '',
+      amount: parseFloat(item.amount).toFixed(2),
+      cityReference: item.city,
+      particulars: item.particulars,
+      user_id: item.user_id,
+      created_at: item.created_at,
+      updated_at: item.updated_at,
+      source: item.source,
+      linked_transaction_id: item.linked_transaction_id,
+      is_cashbook_entry: item.is_cashbook_entry
+    })) || [];
+
+    setEntries(formattedData);
+    setFilteredEntries(formattedData);
+  } catch (error: any) {
+    console.error('Error fetching entries:', error);
+    showNotification('Failed to load entries: ' + error.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     if (type === 'success') {
@@ -126,6 +154,69 @@ export default function CashBookPage() {
       setTimeout(() => setShowSuccess(false), 3000);
     } else {
       alert(message);
+    }
+  };
+
+  // NEW FUNCTION: Fetch person complete history
+  const fetchPersonCompleteHistory = async (personName: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return [];
+
+      // Fetch both cashbook and ledger entries for this person
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('party_name', personName)
+        .or('source.eq.CASHBOOK,source.eq.LEDGER')
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const history: PersonHistory[] = (data || []).map(item => {
+        let type: 'receipt' | 'payment' | 'ledger_debit' | 'ledger_credit';
+        
+        if (item.source === 'CASHBOOK') {
+          type = item.type === 'CREDIT' ? 'receipt' : 'payment';
+        } else {
+          type = item.type === 'DEBIT' ? 'ledger_debit' : 'ledger_credit';
+        }
+
+        return {
+          date: item.date,
+          particulars: item.particulars,
+          amount: parseFloat(item.amount),
+          type: type,
+          source: item.source,
+          folio: item.folio,
+          city: item.city
+        };
+      });
+
+      // Calculate summary
+      const summary = {
+        totalReceipts: history.filter(h => h.type === 'receipt').reduce((sum, h) => sum + h.amount, 0),
+        totalPayments: history.filter(h => h.type === 'payment').reduce((sum, h) => sum + h.amount, 0),
+        ledgerDebit: history.filter(h => h.type === 'ledger_debit').reduce((sum, h) => sum + h.amount, 0),
+        ledgerCredit: history.filter(h => h.type === 'ledger_credit').reduce((sum, h) => sum + h.amount, 0),
+        netBalance: 0
+      };
+
+      // Calculate net balance: (Receipts + Ledger Credit) - (Payments + Ledger Debit)
+      summary.netBalance = (summary.totalReceipts + summary.ledgerCredit) - (summary.totalPayments + summary.ledgerDebit);
+
+      setPersonHistory(history);
+      setPersonSummary(summary);
+      setSelectedPerson(personName);
+      setShowPersonHistory(true);
+
+      return history;
+    } catch (error) {
+      console.error('Error fetching person history:', error);
+      showNotification('Failed to load person history', 'error');
+      return [];
     }
   };
 
@@ -145,28 +236,43 @@ export default function CashBookPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
-      const { error } = await supabase
-        .from('cashbook')
+      // Insert into transactions as CASHBOOK source
+      const { data: newTransaction, error } = await supabase
+        .from('transactions')
         .insert([{
           user_id: user.id,
           date: formData.date,
-          type: formData.type,
-          person_name: formData.personName,
-          ledger_folio: formData.ledgerFolio,
-          amount: amountVal
-        }]);
+          party_id: '',
+          party_name: formData.personName,
+          particulars: formData.type === 'receipt' 
+            ? `Cash received from ${formData.personName}` 
+            : `Cash paid to ${formData.personName}`,
+          folio: formData.ledgerFolio,
+          amount: amountVal,
+          type: formData.type === 'receipt' ? 'CREDIT' : 'DEBIT',
+          city: formData.cityReference,
+          source: 'CASHBOOK',
+          is_cashbook_entry: true,
+          entry_type: 'CASH'
+        }])
+        .select()
+        .single();
 
       if (error) throw error;
 
+      // **UPDATED: If it's a RECEIPT, DO NOT create a ledger credit entry**
+      // If it's a PAYMENT, DO NOT create a ledger debit entry
+      // Only ledger se aane wale entries sync hongi automatically
+
       await fetchEntries();
 
-      // Reset form
       setFormData({
         date: currentDate,
         type: 'receipt',
         personName: '',
         ledgerFolio: '',
-        amount: ''
+        amount: '',
+        cityReference: 'Karachi'
       });
 
       showNotification('Entry added successfully!', 'success');
@@ -191,19 +297,36 @@ export default function CashBookPage() {
     }
 
     try {
+      // Get the original entry to check if it's linked
+      const { data: originalEntry, error: fetchError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('id', editingId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // Update the cashbook entry
       const { error } = await supabase
-        .from('cashbook')
+        .from('transactions')
         .update({
           date: formData.date,
-          type: formData.type,
-          person_name: formData.personName,
-          ledger_folio: formData.ledgerFolio,
+          party_name: formData.personName,
+          particulars: formData.type === 'receipt' 
+            ? `Cash received from ${formData.personName}` 
+            : `Cash paid to ${formData.personName}`,
+          folio: formData.ledgerFolio,
           amount: amountVal,
+          type: formData.type === 'receipt' ? 'CREDIT' : 'DEBIT',
+          city: formData.cityReference,
           updated_at: new Date().toISOString()
         })
         .eq('id', editingId);
 
       if (error) throw error;
+
+      // **UPDATED: Don't update ledger entries from cashbook**
+      // Only sync happens from ledger to cashbook, not vice versa
 
       await fetchEntries();
 
@@ -213,7 +336,8 @@ export default function CashBookPage() {
         type: 'receipt',
         personName: '',
         ledgerFolio: '',
-        amount: ''
+        amount: '',
+        cityReference: 'Karachi'
       });
 
       showNotification('Entry updated successfully!', 'success');
@@ -227,14 +351,32 @@ export default function CashBookPage() {
     if (!confirm('Are you sure you want to delete this entry?')) return;
 
     try {
+      const { data: entryToDelete, error: fetchError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // **UPDATED: Don't delete linked ledger entries**
+      // Cashbook entries are independent
+
+      // Delete the cashbook entry
       const { error } = await supabase
-        .from('cashbook')
+        .from('transactions')
         .delete()
         .eq('id', id);
 
       if (error) throw error;
 
       await fetchEntries();
+      
+      // Close person history modal if open and showing this person
+      if (showPersonHistory && selectedPerson === entryToDelete.party_name) {
+        setShowPersonHistory(false);
+      }
+
       showNotification('Entry deleted successfully!', 'success');
     } catch (error: any) {
       console.error('Error deleting entry:', error);
@@ -249,7 +391,8 @@ export default function CashBookPage() {
       type: entry.type,
       personName: entry.personName,
       ledgerFolio: entry.ledgerFolio,
-      amount: entry.amount
+      amount: entry.amount,
+      cityReference: entry.cityReference
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -261,7 +404,8 @@ export default function CashBookPage() {
       type: 'receipt',
       personName: '',
       ledgerFolio: '',
-      amount: ''
+      amount: '',
+      cityReference: 'Karachi'
     });
   };
 
@@ -281,10 +425,8 @@ export default function CashBookPage() {
     };
   };
 
-  const totals = getTotals();
-
-  const getPersonSummary = () => {
-    const summary: { [key: string]: { received: number; paid: number } } = {};
+  const getPersonSummaryList = () => {
+    const summary: { [personName: string]: { received: number; paid: number } } = {};
 
     filteredEntries.forEach(entry => {
       if (!summary[entry.personName]) {
@@ -308,7 +450,18 @@ export default function CashBookPage() {
     }));
   };
 
-  const personSummary = getPersonSummary();
+  const totals = getTotals();
+  const personSummaryList = getPersonSummaryList();
+
+  // Format date for display
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-PK', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
@@ -320,6 +473,183 @@ export default function CashBookPage() {
             <div>
               <p className="font-semibold">Success!</p>
               <p className="text-sm">{successMessage}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Person History Modal */}
+      {showPersonHistory && selectedPerson && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-purple-600 to-pink-700 text-white p-6 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <Receipt className="h-6 w-6" />
+                  <span className="px-3 py-1 bg-white/20 rounded-full text-sm font-semibold">
+                    Complete History
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold">{selectedPerson}</h2>
+                <p className="text-pink-100 text-sm mt-1">
+                  {personHistory.length} Total Transactions (Cash + Ledger)
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowPersonHistory(false);
+                  setSelectedPerson(null);
+                  setPersonHistory([]);
+                }}
+                className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 p-6 bg-gray-50">
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="h-4 w-4 text-green-600" />
+                  <p className="text-xs text-green-600 font-semibold">Cash Receipts</p>
+                </div>
+                <p className="text-2xl font-bold text-green-700">Rs. {personSummary.totalReceipts.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingDown className="h-4 w-4 text-red-600" />
+                  <p className="text-xs text-red-600 font-semibold">Cash Payments</p>
+                </div>
+                <p className="text-2xl font-bold text-red-700">Rs. {personSummary.totalPayments.toFixed(2)}</p>
+              </div>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Wallet className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs text-blue-600 font-semibold">Net Balance</p>
+                </div>
+                <p className={`text-2xl font-bold ${personSummary.netBalance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+                  Rs. {Math.abs(personSummary.netBalance).toFixed(2)} {personSummary.netBalance >= 0 ? '(To Receive)' : '(To Pay)'}
+                </p>
+              </div>
+            </div>
+
+            {/* Ledger Summary */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-6 bg-white border-t border-b border-gray-200">
+              <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 border-2 border-indigo-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <History className="h-4 w-4 text-indigo-600" />
+                  <p className="text-xs text-indigo-600 font-semibold">Ledger Debit</p>
+                </div>
+                <p className="text-xl font-bold text-indigo-700">Rs. {personSummary.ledgerDebit.toFixed(2)}</p>
+                <p className="text-xs text-indigo-500 mt-1">Goods given on credit</p>
+              </div>
+              <div className="bg-gradient-to-br from-teal-50 to-teal-100 border-2 border-teal-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <History className="h-4 w-4 text-teal-600" />
+                  <p className="text-xs text-teal-600 font-semibold">Ledger Credit</p>
+                </div>
+                <p className="text-xl font-bold text-teal-700">Rs. {personSummary.ledgerCredit.toFixed(2)}</p>
+                <p className="text-xs text-teal-500 mt-1">Cash received in ledger</p>
+              </div>
+            </div>
+
+            {/* Transaction History */}
+            <div className="flex-1 overflow-y-auto p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <History className="h-5 w-5 text-purple-600" />
+                Transaction History
+              </h3>
+              <div className="space-y-3">
+                {personHistory.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <AlertCircle className="h-12 w-12 mx-auto text-gray-400" />
+                    <p className="mt-4">No transactions found</p>
+                  </div>
+                ) : (
+                  personHistory.map((entry, index) => (
+                    <div
+                      key={index}
+                      className={`border-2 rounded-lg p-4 hover:shadow-md transition-shadow ${
+                        entry.source === 'CASHBOOK' 
+                          ? entry.type === 'receipt' 
+                            ? 'border-green-200 bg-green-50' 
+                            : 'border-red-200 bg-red-50'
+                          : entry.type === 'ledger_debit'
+                            ? 'border-orange-200 bg-orange-50'
+                            : 'border-teal-200 bg-teal-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <div className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
+                              {formatDate(entry.date)}
+                            </div>
+                            <div className={`px-2 py-1 rounded text-xs font-bold ${
+                              entry.source === 'CASHBOOK'
+                                ? entry.type === 'receipt'
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-red-100 text-red-700'
+                                : entry.type === 'ledger_debit'
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'bg-teal-100 text-teal-700'
+                            }`}>
+                              {entry.source === 'CASHBOOK' 
+                                ? entry.type.toUpperCase()
+                                : entry.type === 'ledger_debit' ? 'LEDGER DEBIT' : 'LEDGER CREDIT'
+                              }
+                            </div>
+                            {entry.folio && (
+                              <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                F: {entry.folio}
+                              </div>
+                            )}
+                            {entry.city && (
+                              <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                {entry.city}
+                              </div>
+                            )}
+                          </div>
+
+                          <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="text-gray-500 text-sm">Amount:</span>
+                              <span className={`ml-2 font-bold text-lg ${
+                                entry.type === 'receipt' || entry.type === 'ledger_credit'
+                                  ? 'text-green-700'
+                                  : 'text-red-700'
+                              }`}>
+                                Rs. {entry.amount.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {entry.source} • {entry.type.includes('ledger') ? 'Auto-synced' : 'Manual'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-4 bg-gray-50">
+              <Button
+                onClick={() => {
+                  setShowPersonHistory(false);
+                  setSelectedPerson(null);
+                  setPersonHistory([]);
+                }}
+                className="w-full bg-gradient-to-r from-purple-600 to-pink-700 hover:from-purple-700 hover:to-pink-800"
+              >
+                Close
+              </Button>
             </div>
           </div>
         </div>
@@ -497,6 +827,17 @@ export default function CashBookPage() {
                 />
               </div>
               <div>
+                <Label className="text-sm">City Reference</Label>
+                <select
+                  value={formData.cityReference}
+                  onChange={(e) => setFormData({ ...formData, cityReference: e.target.value })}
+                  className="mt-1 w-full h-10 px-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="Karachi">Karachi</option>
+                  <option value="Lahore">Lahore</option>
+                </select>
+              </div>
+              <div>
                 <Label className="text-sm">Amount (Rs.) *</Label>
                 <Input
                   type="number"
@@ -579,9 +920,18 @@ export default function CashBookPage() {
                       ) : (
                         <>
                           {getReceipts().map((entry, index) => (
-                            <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-green-50 transition-colors`}>
+                            <tr 
+                              key={entry.id} 
+                              className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-green-50 transition-colors cursor-pointer`}
+                              onClick={() => fetchPersonCompleteHistory(entry.personName)}
+                            >
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.date}</td>
-                              <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.personName}</td>
+                              <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm font-medium">
+                                <div className="flex items-center gap-2">
+                                  {entry.personName}
+                                  <History className="h-3 w-3 text-gray-400" />
+                                </div>
+                              </td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">{entry.ledgerFolio || '-'}</td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm font-semibold text-green-700">{entry.amount}</td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-center print:hidden">
@@ -589,7 +939,10 @@ export default function CashBookPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => startEdit(entry)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      startEdit(entry);
+                                    }}
                                     className="text-blue-600 hover:bg-blue-50 p-1"
                                   >
                                     <Edit2 className="h-3 w-3 md:h-4 md:w-4" />
@@ -597,7 +950,10 @@ export default function CashBookPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => deleteEntry(entry.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteEntry(entry.id);
+                                    }}
                                     className="text-red-600 hover:bg-red-50 p-1"
                                   >
                                     <Trash2 className="h-3 w-3 md:h-4 md:w-4" />
@@ -660,9 +1016,18 @@ export default function CashBookPage() {
                       ) : (
                         <>
                           {getPayments().map((entry, index) => (
-                            <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50 transition-colors`}>
+                            <tr 
+                              key={entry.id} 
+                              className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-red-50 transition-colors cursor-pointer`}
+                              onClick={() => fetchPersonCompleteHistory(entry.personName)}
+                            >
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.date}</td>
-                              <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.personName}</td>
+                              <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm font-medium">
+                                <div className="flex items-center gap-2">
+                                  {entry.personName}
+                                  <History className="h-3 w-3 text-gray-400" />
+                                </div>
+                              </td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">{entry.ledgerFolio || '-'}</td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm font-semibold text-red-700">{entry.amount}</td>
                               <td className="border border-gray-300 px-2 md:px-4 py-2 text-center print:hidden">
@@ -670,7 +1035,10 @@ export default function CashBookPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => startEdit(entry)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      startEdit(entry);
+                                    }}
                                     className="text-blue-600 hover:bg-blue-50 p-1"
                                   >
                                     <Edit2 className="h-3 w-3 md:h-4 md:w-4" />
@@ -678,7 +1046,10 @@ export default function CashBookPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    onClick={() => deleteEntry(entry.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteEntry(entry.id);
+                                    }}
                                     className="text-red-600 hover:bg-red-50 p-1"
                                   >
                                     <Trash2 className="h-3 w-3 md:h-4 md:w-4" />
@@ -729,7 +1100,7 @@ export default function CashBookPage() {
             </Card>
 
             {/* Person-wise Summary */}
-            {personSummary.length > 0 && (
+            {personSummaryList.length > 0 && (
               <Card className="shadow-lg print:break-before-page">
                 <CardHeader className="bg-indigo-600 text-white p-4">
                   <CardTitle className="text-xl">Person-wise Summary</CardTitle>
@@ -744,10 +1115,11 @@ export default function CashBookPage() {
                           <th className="border border-gray-300 px-4 py-3 text-right font-semibold">Paid To</th>
                           <th className="border border-gray-300 px-4 py-3 text-right font-semibold">Balance</th>
                           <th className="border border-gray-300 px-4 py-3 text-center font-semibold">Status</th>
+                          <th className="border border-gray-300 px-4 py-3 text-center font-semibold print:hidden">View History</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {personSummary.map((person, index) => (
+                        {personSummaryList.map((person, index) => (
                           <tr key={index} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
                             <td className="border border-gray-300 px-4 py-2 font-medium">{person.name}</td>
                             <td className="border border-gray-300 px-4 py-2 text-right font-mono text-green-700">Rs. {person.received}</td>
@@ -761,6 +1133,17 @@ export default function CashBookPage() {
                               }`}>
                                 {person.balanceType}
                               </span>
+                            </td>
+                            <td className="border border-gray-300 px-4 py-2 text-center print:hidden">
+                              <Button
+                                onClick={() => fetchPersonCompleteHistory(person.name)}
+                                variant="outline"
+                                size="sm"
+                                className="flex items-center gap-1"
+                              >
+                                <History className="h-3 w-3" />
+                                History
+                              </Button>
                             </td>
                           </tr>
                         ))}

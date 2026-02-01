@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle, 
-  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye
+  Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle,
+  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye, Wallet, History
 } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -26,6 +26,9 @@ interface LedgerEntry {
   user_id?: string;
   created_at?: string;
   updated_at?: string;
+  source?: string;
+  cashbook_synced?: boolean;
+  linked_transaction_id?: string;
 }
 
 interface PartyData {
@@ -37,6 +40,8 @@ interface PartyData {
   type: string;
   transaction_count: number;
   transactions?: LedgerEntry[];
+  cashbook_entries?: any[];
+  complete_history?: any[];
 }
 
 export default function KarachiLedgerPage() {
@@ -48,14 +53,24 @@ export default function KarachiLedgerPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [modalEditingId, setModalEditingId] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [partySuggestions, setPartySuggestions] = useState<PartyData[]>([]);
   const [showPartySuggestions, setShowPartySuggestions] = useState(false);
   const [selectedParty, setSelectedParty] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'all' | 'party'>('all');
   const [showPartyModal, setShowPartyModal] = useState(false);
   const [selectedPartyData, setSelectedPartyData] = useState<PartyData | null>(null);
+  const [showCompleteHistory, setShowCompleteHistory] = useState(false);
+
+  const [showAddEntryInModal, setShowAddEntryInModal] = useState(false);
+  const [modalAddFormData, setModalAddFormData] = useState({
+    date: '',
+    particulars: '',
+    folio: '',
+    debit: '',
+    credit: ''
+  });
 
   const [formData, setFormData] = useState({
     date: '',
@@ -79,6 +94,7 @@ export default function KarachiLedgerPage() {
     const today = new Date().toISOString().split('T')[0];
     setCurrentDate(today);
     setFormData(prev => ({ ...prev, date: today }));
+    setModalAddFormData(prev => ({ ...prev, date: today }));
     fetchEntries();
   }, []);
 
@@ -160,9 +176,11 @@ export default function KarachiLedgerPage() {
       }
 
       const { data, error } = await supabase
-        .from('karachi_ledger')
+        .from('transactions')
         .select('*')
         .eq('user_id', user.id)
+        .eq('city', 'Karachi')
+        .eq('source', 'LEDGER')
         .order('date', { ascending: true })
         .order('created_at', { ascending: true });
 
@@ -175,17 +193,21 @@ export default function KarachiLedgerPage() {
         party_name: item.party_name || '',
         particulars: item.particulars,
         folio: item.folio || '',
-        debit: item.debit.toString(),
-        credit: item.credit.toString(),
-        balance: item.balance.toString(),
-        type: item.type,
+        debit: item.type === 'DEBIT' ? item.amount.toString() : '0',
+        credit: item.type === 'CREDIT' ? item.amount.toString() : '0',
+        balance: item.balance?.toString() || '0',
+        type: item.type === 'DEBIT' ? 'Dr' : 'Cr',
         user_id: item.user_id,
         created_at: item.created_at,
-        updated_at: item.updated_at
+        updated_at: item.updated_at,
+        source: item.source,
+        cashbook_synced: item.cashbook_synced || false,
+        linked_transaction_id: item.linked_transaction_id
       })) || [];
 
-      setEntries(formattedData);
-      setFilteredEntries(formattedData);
+      const calculatedEntries = calculateBalance(formattedData);
+      setEntries(calculatedEntries);
+      setFilteredEntries(calculatedEntries);
     } catch (error: any) {
       console.error('Error fetching entries:', error);
       showNotification('Failed to load entries: ' + error.message, 'error');
@@ -255,10 +277,159 @@ export default function KarachiLedgerPage() {
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     if (type === 'success') {
+      setSuccessMessage(message);
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } else {
       alert(message);
+    }
+  };
+
+  // **UPDATED: Debit Entry ko Cashbook mein sync karein**
+  const syncToCashbook = async (transactionId: string, entry: LedgerEntry) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+
+      const debitVal = parseFloat(entry.debit);
+      if (debitVal > 0) {
+        // Create cashbook entry as PAYMENT
+        const { data: cashbookEntry, error } = await supabase
+          .from('transactions')
+          .insert([{
+            user_id: user.id,
+            date: entry.date,
+            party_id: entry.party_id,
+            party_name: entry.party_name,
+            particulars: `Cash paid to ${entry.party_name} - ${entry.particulars}`,
+            folio: entry.folio,
+            amount: debitVal,
+            type: 'DEBIT', // DEBIT = Payment in cashbook
+            city: 'Karachi',
+            source: 'CASHBOOK',
+            is_cashbook_entry: true,
+            linked_transaction_id: transactionId,
+            entry_type: 'CASH'
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        // Mark ledger entry as synced
+        await supabase
+          .from('transactions')
+          .update({ cashbook_synced: true })
+          .eq('id', transactionId);
+
+        showNotification('Debit entry synced to Cash Book (Payments) successfully!', 'success');
+        fetchEntries();
+      }
+    } catch (error: any) {
+      console.error('Error syncing to cashbook:', error);
+      showNotification('Failed to sync to Cash Book: ' + error.message, 'error');
+    }
+  };
+
+  // Fetch complete history for party
+  const fetchPartyCompleteHistory = async (partyId: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return [];
+
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .or(`party_id.eq.${partyId},party_name.eq.${selectedPartyData?.party_name}`)
+        .or('source.eq.LEDGER,source.eq.CASHBOOK')
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching complete history:', error);
+      return [];
+    }
+  };
+
+  const addEntryFromModal = async () => {
+    if (!selectedPartyData) return;
+
+    if (!modalAddFormData.particulars.trim()) {
+      showNotification('Please enter particulars!', 'error');
+      return;
+    }
+
+    const debitVal = parseFloat(modalAddFormData.debit) || 0;
+    const creditVal = parseFloat(modalAddFormData.credit) || 0;
+
+    if (debitVal === 0 && creditVal === 0) {
+      showNotification('Please enter either debit or credit amount!', 'error');
+      return;
+    }
+
+    if (debitVal > 0 && creditVal > 0) {
+      showNotification('Only debit OR credit can be set, not both!', 'error');
+      return;
+    }
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+
+      // Insert ledger entry
+      const { data: newTransaction, error } = await supabase
+        .from('transactions')
+        .insert([{
+          user_id: user.id,
+          date: modalAddFormData.date,
+          party_id: selectedPartyData.party_id,
+          party_name: selectedPartyData.party_name,
+          particulars: modalAddFormData.particulars,
+          folio: modalAddFormData.folio,
+          amount: debitVal > 0 ? debitVal : creditVal,
+          type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
+          city: 'Karachi',
+          source: 'LEDGER',
+          cashbook_synced: false // Start with false
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // **UPDATED: DEBIT ko auto-sync karein (Credit ko nahi)**
+      if (debitVal > 0) {
+        await syncToCashbook(newTransaction.id, {
+          ...newTransaction,
+          debit: debitVal.toString(),
+          credit: creditVal.toString(),
+          balance: '0',
+          type: 'Dr'
+        });
+      }
+
+      await fetchEntries();
+
+      const today = new Date().toISOString().split('T')[0];
+      setModalAddFormData({
+        date: today,
+        particulars: '',
+        folio: '',
+        debit: '',
+        credit: ''
+      });
+
+      setShowAddEntryInModal(false);
+      setTimeout(() => openPartyModal(selectedPartyData.party_id), 100);
+
+      showNotification('Entry added successfully!', 'success');
+    } catch (error: any) {
+      console.error('Error adding entry:', error);
+      showNotification('Failed to add entry: ' + error.message, 'error');
     }
   };
 
@@ -281,16 +452,21 @@ export default function KarachiLedgerPage() {
       return;
     }
 
+    if (debitVal > 0 && creditVal > 0) {
+      showNotification('Only debit OR credit can be set, not both!', 'error');
+      return;
+    }
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
       let partyId = formData.party_id;
       if (!partyId) {
-        const existingParty = entries.find(e => 
+        const existingParty = entries.find(e =>
           e.party_name.toLowerCase() === formData.party_name.toLowerCase()
         );
-        
+
         if (existingParty) {
           partyId = existingParty.party_id;
         } else {
@@ -298,8 +474,9 @@ export default function KarachiLedgerPage() {
         }
       }
 
-      const { error } = await supabase
-        .from('karachi_ledger')
+      // Insert ledger entry
+      const { data: newTransaction, error } = await supabase
+        .from('transactions')
         .insert([{
           user_id: user.id,
           date: formData.date,
@@ -307,13 +484,27 @@ export default function KarachiLedgerPage() {
           party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
-          debit: debitVal,
-          credit: creditVal,
-          balance: 0,
-          type: 'Dr'
-        }]);
+          amount: debitVal > 0 ? debitVal : creditVal,
+          type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
+          city: 'Karachi',
+          source: 'LEDGER',
+          cashbook_synced: false
+        }])
+        .select()
+        .single();
 
       if (error) throw error;
+
+      // **UPDATED: DEBIT ko auto-sync karein (Credit ko nahi)**
+      if (debitVal > 0) {
+        await syncToCashbook(newTransaction.id, {
+          ...newTransaction,
+          debit: debitVal.toString(),
+          credit: creditVal.toString(),
+          balance: '0',
+          type: 'Dr'
+        });
+      }
 
       await fetchEntries();
 
@@ -350,17 +541,27 @@ export default function KarachiLedgerPage() {
     const debitVal = parseFloat(formData.debit) || 0;
     const creditVal = parseFloat(formData.credit) || 0;
 
+    if (debitVal === 0 && creditVal === 0) {
+      showNotification('Please enter either debit or credit amount!', 'error');
+      return;
+    }
+
+    if (debitVal > 0 && creditVal > 0) {
+      showNotification('Only debit OR credit can be set, not both!', 'error');
+      return;
+    }
+
     try {
       const { error } = await supabase
-        .from('karachi_ledger')
+        .from('transactions')
         .update({
           date: formData.date,
           party_id: formData.party_id,
           party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
-          debit: debitVal,
-          credit: creditVal,
+          amount: debitVal > 0 ? debitVal : creditVal,
+          type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
           updated_at: new Date().toISOString()
         })
         .eq('id', editingId);
@@ -399,15 +600,25 @@ export default function KarachiLedgerPage() {
     const debitVal = parseFloat(formDataForEntry.debit) || 0;
     const creditVal = parseFloat(formDataForEntry.credit) || 0;
 
+    if (debitVal === 0 && creditVal === 0) {
+      showNotification('Please enter either debit or credit amount!', 'error');
+      return;
+    }
+
+    if (debitVal > 0 && creditVal > 0) {
+      showNotification('Only debit OR credit can be set, not both!', 'error');
+      return;
+    }
+
     try {
       const { error } = await supabase
-        .from('karachi_ledger')
+        .from('transactions')
         .update({
           date: formDataForEntry.date,
           particulars: formDataForEntry.particulars,
           folio: formDataForEntry.folio,
-          debit: debitVal,
-          credit: creditVal,
+          amount: debitVal > 0 ? debitVal : creditVal,
+          type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
           updated_at: new Date().toISOString()
         })
         .eq('id', entryId);
@@ -415,8 +626,7 @@ export default function KarachiLedgerPage() {
       if (error) throw error;
 
       await fetchEntries();
-      
-      // Refresh modal data
+
       if (selectedPartyData) {
         const partyId = selectedPartyData.party_id;
         setTimeout(() => openPartyModal(partyId), 100);
@@ -440,16 +650,28 @@ export default function KarachiLedgerPage() {
     if (!confirm('Are you sure you want to delete this entry?')) return;
 
     try {
+      // First check if this entry has cashbook sync
+      const entryToDelete = entries.find(e => e.id === id);
+      
+      // Delete linked cashbook entry if exists
+      if (entryToDelete?.cashbook_synced) {
+        await supabase
+          .from('transactions')
+          .delete()
+          .eq('linked_transaction_id', id)
+          .eq('source', 'CASHBOOK');
+      }
+
+      // Delete the ledger entry
       const { error } = await supabase
-        .from('karachi_ledger')
+        .from('transactions')
         .delete()
         .eq('id', id);
 
       if (error) throw error;
 
       await fetchEntries();
-      
-      // Refresh modal if open
+
       if (showPartyModal && selectedPartyData) {
         const partyId = selectedPartyData.party_id;
         const remainingEntries = entries.filter(e => e.party_id === partyId && e.id !== id);
@@ -459,7 +681,7 @@ export default function KarachiLedgerPage() {
           setShowPartyModal(false);
         }
       }
-      
+
       showNotification('Entry deleted successfully!', 'success');
     } catch (error: any) {
       console.error('Error deleting entry:', error);
@@ -478,11 +700,11 @@ export default function KarachiLedgerPage() {
       debit: entry.debit,
       credit: entry.credit
     });
-    
+
     if (showPartyModal) {
       setShowPartyModal(false);
     }
-    
+
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -531,41 +753,64 @@ export default function KarachiLedgerPage() {
     setShowPartySuggestions(false);
   };
 
-  const viewPartyLedger = (partyId: string) => {
-    setSelectedParty(partyId);
-    setViewMode('party');
-    const partyEntries = entries.filter(e => e.party_id === partyId);
-    setFilteredEntries(partyEntries);
-    setSearchQuery('');
-    window.scrollTo({ top: 400, behavior: 'smooth' });
-  };
+  const openPartyModal = async (partyId: string) => {
+    try {
+      const partyEntries = entries.filter(e => e.party_id === partyId);
+      const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
+      const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
+      const balance = totalDebit - totalCredit;
 
-  const openPartyModal = (partyId: string) => {
-    const partyEntries = entries.filter(e => e.party_id === partyId);
-    const totalDebit = partyEntries.reduce((sum, e) => sum + parseFloat(e.debit), 0);
-    const totalCredit = partyEntries.reduce((sum, e) => sum + parseFloat(e.credit), 0);
-    const balance = totalDebit - totalCredit;
+      // Fetch cashbook entries for this party
+      const { data: { user } } = await supabase.auth.getUser();
+      let cashbookEntries: any[] = [];
 
-    const partyData: PartyData = {
-      party_id: partyId,
-      party_name: partyEntries[0]?.party_name || '',
-      total_debit: totalDebit,
-      total_credit: totalCredit,
-      balance: Math.abs(balance),
-      type: balance >= 0 ? 'Dr' : 'Cr',
-      transaction_count: partyEntries.length,
-      transactions: calculatePartyBalance(partyId)
-    };
+      if (user) {
+        const { data } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('source', 'CASHBOOK')
+          .eq('party_name', partyEntries[0]?.party_name || '')
+          .order('date', { ascending: true });
 
-    setSelectedPartyData(partyData);
-    setShowPartyModal(true);
-    setModalEditingId(null);
-    setModalFormData({});
+        cashbookEntries = data || [];
+      }
+
+      const partyData: PartyData = {
+        party_id: partyId,
+        party_name: partyEntries[0]?.party_name || '',
+        total_debit: totalDebit,
+        total_credit: totalCredit,
+        balance: Math.abs(balance),
+        type: balance >= 0 ? 'Dr' : 'Cr',
+        transaction_count: partyEntries.length,
+        transactions: calculatePartyBalance(partyId),
+        cashbook_entries: cashbookEntries
+      };
+
+      setSelectedPartyData(partyData);
+      setShowPartyModal(true);
+      setModalEditingId(null);
+      setModalFormData({});
+      setShowAddEntryInModal(false);
+      setShowCompleteHistory(false);
+
+      const today = new Date().toISOString().split('T')[0];
+      setModalAddFormData({
+        date: today,
+        particulars: '',
+        folio: '',
+        debit: '',
+        credit: ''
+      });
+    } catch (error) {
+      console.error('Error opening party modal:', error);
+      showNotification('Failed to load party data', 'error');
+    }
   };
 
   const clearPartyFilter = () => {
     setSelectedParty(null);
-    setViewMode('all');
     setFilteredEntries(entries);
   };
 
@@ -605,7 +850,7 @@ export default function KarachiLedgerPage() {
       }
     });
 
-    return Array.from(partyMap.values()).sort((a, b) => 
+    return Array.from(partyMap.values()).sort((a, b) =>
       parseInt(a.party_id) - parseInt(b.party_id)
     );
   };
@@ -622,7 +867,7 @@ export default function KarachiLedgerPage() {
             <CheckCircle2 className="h-6 w-6" />
             <div>
               <p className="font-semibold">Success!</p>
-              <p className="text-sm">Entry saved successfully</p>
+              <p className="text-sm">{successMessage}</p>
             </div>
           </div>
         </div>
@@ -646,13 +891,22 @@ export default function KarachiLedgerPage() {
                   </span>
                 </div>
                 <h2 className="text-2xl font-bold">{selectedPartyData.party_name}</h2>
-                <p className="text-blue-100 text-sm mt-1">{selectedPartyData.transaction_count} Transactions</p>
+                <div className="flex items-center gap-4 mt-2">
+                  <p className="text-blue-100 text-sm">{selectedPartyData.transaction_count} Ledger Transactions</p>
+                  {selectedPartyData.cashbook_entries && (
+                    <p className="text-green-100 text-sm bg-white/20 px-2 py-1 rounded">
+                      {selectedPartyData.cashbook_entries.length} Cash Entries
+                    </p>
+                  )}
+                </div>
               </div>
               <button
                 onClick={() => {
                   setShowPartyModal(false);
                   setModalEditingId(null);
                   setModalFormData({});
+                  setShowAddEntryInModal(false);
+                  setShowCompleteHistory(false);
                 }}
                 className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
               >
@@ -661,7 +915,7 @@ export default function KarachiLedgerPage() {
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6 bg-gray-50">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-6 bg-gray-50">
               <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <TrendingUp className="h-4 w-4 text-red-600" />
@@ -683,173 +937,414 @@ export default function KarachiLedgerPage() {
                 </div>
                 <p className="text-2xl font-bold text-blue-700">Rs. {selectedPartyData.balance.toFixed(2)}</p>
               </div>
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Wallet className="h-4 w-4 text-purple-600" />
+                  <p className="text-xs text-purple-600 font-semibold">Cash Entries</p>
+                </div>
+                <p className="text-2xl font-bold text-purple-700">{selectedPartyData.cashbook_entries?.length || 0}</p>
+              </div>
+            </div>
+
+            {/* History View Toggle */}
+            <div className="flex border-b border-gray-200 bg-white">
+              <button
+                onClick={() => setShowCompleteHistory(false)}
+                className={`flex-1 py-3 text-center font-medium ${!showCompleteHistory ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                Ledger History
+              </button>
+              <button
+                onClick={async () => {
+                  setShowCompleteHistory(true);
+                  // Fetch complete history
+                  const completeHistory = await fetchPartyCompleteHistory(selectedPartyData.party_id);
+                  setSelectedPartyData({
+                    ...selectedPartyData,
+                    complete_history: completeHistory
+                  });
+                }}
+                className={`flex-1 py-3 text-center font-medium ${showCompleteHistory ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <History className="h-4 w-4" />
+                  Complete History
+                </div>
+              </button>
+            </div>
+
+            {/* Add Entry Button */}
+            <div className="px-6 pt-2 pb-4 bg-gray-50 border-b border-gray-200">
+              {!showAddEntryInModal ? (
+                <Button
+                  onClick={() => setShowAddEntryInModal(true)}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Entry
+                </Button>
+              ) : (
+                <div className="bg-white border-2 border-blue-300 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-bold text-blue-700">Add New Transaction</h4>
+                    <button
+                      onClick={() => {
+                        setShowAddEntryInModal(false);
+                        const today = new Date().toISOString().split('T')[0];
+                        setModalAddFormData({
+                          date: today,
+                          particulars: '',
+                          folio: '',
+                          debit: '',
+                          credit: ''
+                        });
+                      }}
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Date</Label>
+                      <Input
+                        type="date"
+                        value={modalAddFormData.date}
+                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, date: e.target.value }))}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Folio</Label>
+                      <Input
+                        value={modalAddFormData.folio}
+                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, folio: e.target.value }))}
+                        placeholder="F-001"
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs">Particulars *</Label>
+                    <Input
+                      value={modalAddFormData.particulars}
+                      onChange={(e) => setModalAddFormData(prev => ({ ...prev, particulars: e.target.value }))}
+                      placeholder="Description"
+                      className="mt-1"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Debit (Rs.) *Auto-sync to Cashbook*</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={modalAddFormData.debit}
+                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, debit: e.target.value }))}
+                        placeholder="0.00"
+                        className="mt-1 border-2 border-blue-300"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Credit (Rs.) *No Auto-sync*</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={modalAddFormData.credit}
+                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, credit: e.target.value }))}
+                        placeholder="0.00"
+                        className="mt-1 border-2 border-gray-300"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={addEntryFromModal}
+                      className="flex-1 bg-green-600 hover:bg-green-700"
+                    >
+                      <Save className="h-3 w-3 mr-1" />
+                      Save Entry
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setShowAddEntryInModal(false);
+                        const today = new Date().toISOString().split('T')[0];
+                        setModalAddFormData({
+                          date: today,
+                          particulars: '',
+                          folio: '',
+                          debit: '',
+                          credit: ''
+                        });
+                      }}
+                      variant="outline"
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Transaction History */}
             <div className="flex-1 overflow-y-auto p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-blue-600" />
-                Transaction History
-              </h3>
-              
-              <div className="space-y-3">
-                {selectedPartyData.transactions?.map((entry) => (
-                  <div 
-                    key={entry.id}
-                    className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                  >
-                    {modalEditingId === entry.id ? (
-                      // Edit Mode
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs">Date</Label>
-                            <Input
-                              type="date"
-                              value={modalFormData[entry.id]?.date || entry.date}
-                              onChange={(e) => setModalFormData(prev => ({
-                                ...prev,
-                                [entry.id]: { ...(prev[entry.id] || { particulars: '', folio: '', debit: '', credit: '' }), date: e.target.value }
-                              }))}
-                              className="mt-1"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">Folio</Label>
-                            <Input
-                              value={modalFormData[entry.id]?.folio || entry.folio}
-                              onChange={(e) => setModalFormData(prev => ({
-                                ...prev,
-                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', debit: '', credit: '' }), folio: e.target.value }
-                              }))}
-                              className="mt-1"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <Label className="text-xs">Particulars</Label>
-                          <Input
-                            value={modalFormData[entry.id]?.particulars || entry.particulars}
-                            onChange={(e) => setModalFormData(prev => ({
-                              ...prev,
-                              [entry.id]: { ...(prev[entry.id] || { date: '', folio: '', debit: '', credit: '' }), particulars: e.target.value }
-                            }))}
-                            className="mt-1"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs">Debit (Rs.)</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={modalFormData[entry.id]?.debit || entry.debit}
-                              onChange={(e) => setModalFormData(prev => ({
-                                ...prev,
-                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', credit: '' }), debit: e.target.value }
-                              }))}
-                              className="mt-1"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">Credit (Rs.)</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={modalFormData[entry.id]?.credit || entry.credit}
-                              onChange={(e) => setModalFormData(prev => ({
-                                ...prev,
-                                [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', debit: '' }), credit: e.target.value }
-                              }))}
-                              className="mt-1"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            onClick={() => updateModalEntry(entry.id)}
-                            className="bg-green-600 hover:bg-green-700"
-                            size="sm"
-                          >
-                            <Save className="h-3 w-3 mr-1" />
-                            Save
-                          </Button>
-                          <Button
-                            onClick={() => cancelModalEdit(entry.id)}
-                            variant="outline"
-                            size="sm"
-                          >
-                            <X className="h-3 w-3 mr-1" />
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      // View Mode
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
-                              {formatDate(entry.date)}
-                            </div>
-                            {entry.folio && (
-                              <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
-                                F: {entry.folio}
+              {showCompleteHistory ? (
+                <>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <History className="h-5 w-5 text-blue-600" />
+                    Complete Transaction History (Ledger + Cash)
+                  </h3>
+                  <div className="space-y-3">
+                    {selectedPartyData.complete_history?.map((entry: any) => (
+                      <div
+                        key={entry.id}
+                        className={`bg-white border-2 rounded-lg p-4 hover:shadow-md transition-shadow ${
+                          entry.source === 'CASHBOOK' ? 'border-green-200 bg-green-50' : 'border-blue-200 bg-blue-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <div className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
+                                {formatDate(entry.date)}
                               </div>
-                            )}
-                            <span className={`px-2 py-1 rounded text-xs font-bold ${
-                              entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                            }`}>
-                              {entry.type}
-                            </span>
+                              <div className={`px-2 py-1 rounded text-xs font-bold ${
+                                entry.source === 'CASHBOOK' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                              }`}>
+                                {entry.source === 'CASHBOOK' ? 'CASH' : 'LEDGER'}
+                              </div>
+                              <div className={`px-2 py-1 rounded text-xs font-bold ${
+                                entry.type === 'DEBIT' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                              }`}>
+                                {entry.type === 'DEBIT' ? 'Dr' : 'Cr'}
+                              </div>
+                              {entry.folio && (
+                                <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                  F: {entry.folio}
+                                </div>
+                              )}
+                            </div>
+
+                            <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                              <div>
+                                <span className="text-gray-500">Amount:</span>
+                                <span className="ml-2 font-semibold text-purple-600">
+                                  Rs. {parseFloat(entry.amount).toFixed(2)}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Type:</span>
+                                <span className="ml-2 font-semibold">
+                                  {entry.type === 'DEBIT' ? 'Debit' : 'Credit'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Source:</span>
+                                <span className="ml-2 font-semibold">
+                                  {entry.source}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          
-                          <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
-                          
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                            <div>
-                              <span className="text-gray-500">Debit:</span>
-                              <span className="ml-2 font-semibold text-red-600">
-                                {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Credit:</span>
-                              <span className="ml-2 font-semibold text-green-600">
-                                {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Balance:</span>
-                              <span className="ml-2 font-semibold text-blue-600">
-                                Rs. {entry.balance}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Action Buttons */}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => startModalEdit(entry)}
-                            className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2 rounded-lg transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => deleteEntry(entry.id)}
-                            className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
                         </div>
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
-              </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-blue-600" />
+                    Ledger Transaction History
+                  </h3>
+                  <div className="space-y-3">
+                    {selectedPartyData.transactions?.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                      >
+                        {modalEditingId === entry.id ? (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs">Date</Label>
+                                <Input
+                                  type="date"
+                                  value={modalFormData[entry.id]?.date || entry.date}
+                                  onChange={(e) => setModalFormData(prev => ({
+                                    ...prev,
+                                    [entry.id]: { ...(prev[entry.id] || { particulars: '', folio: '', debit: '', credit: '' }), date: e.target.value }
+                                  }))}
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Folio</Label>
+                                <Input
+                                  value={modalFormData[entry.id]?.folio || entry.folio}
+                                  onChange={(e) => setModalFormData(prev => ({
+                                    ...prev,
+                                    [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', debit: '', credit: '' }), folio: e.target.value }
+                                  }))}
+                                  className="mt-1"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <Label className="text-xs">Particulars</Label>
+                              <Input
+                                value={modalFormData[entry.id]?.particulars || entry.particulars}
+                                onChange={(e) => setModalFormData(prev => ({
+                                  ...prev,
+                                  [entry.id]: { ...(prev[entry.id] || { date: '', folio: '', debit: '', credit: '' }), particulars: e.target.value }
+                                }))}
+                                className="mt-1"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs">Debit (Rs.) *Auto-sync*</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={modalFormData[entry.id]?.debit || entry.debit}
+                                  onChange={(e) => setModalFormData(prev => ({
+                                    ...prev,
+                                    [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', credit: '' }), debit: e.target.value }
+                                  }))}
+                                  className="mt-1 border-2 border-blue-300"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Credit (Rs.) *No Sync*</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={modalFormData[entry.id]?.credit || entry.credit}
+                                  onChange={(e) => setModalFormData(prev => ({
+                                    ...prev,
+                                    [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', debit: '' }), credit: e.target.value }
+                                  }))}
+                                  className="mt-1 border-2 border-gray-300"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={() => updateModalEntry(entry.id)}
+                                className="bg-green-600 hover:bg-green-700"
+                                size="sm"
+                              >
+                                <Save className="h-3 w-3 mr-1" />
+                                Save
+                              </Button>
+                              <Button
+                                onClick={() => cancelModalEdit(entry.id)}
+                                variant="outline"
+                                size="sm"
+                              >
+                                <X className="h-3 w-3 mr-1" />
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
+                                  {formatDate(entry.date)}
+                                </div>
+                                {entry.folio && (
+                                  <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                    F: {entry.folio}
+                                  </div>
+                                )}
+                                <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                  entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                                }`}>
+                                  {entry.type}
+                                </span>
+                                {entry.cashbook_synced && (
+                                  <div className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold flex items-center gap-1">
+                                    <Wallet className="h-3 w-3" />
+                                    Cash
+                                  </div>
+                                )}
+                              </div>
+
+                              <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                                <div>
+                                  <span className="text-gray-500">Debit:</span>
+                                  <span className="ml-2 font-semibold text-red-600">
+                                    {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Credit:</span>
+                                  <span className="ml-2 font-semibold text-green-600">
+                                    {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Balance:</span>
+                                  <span className="ml-2 font-semibold text-blue-600">
+                                    Rs. {entry.balance}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Status:</span>
+                                  <span className={`ml-2 font-semibold ${
+                                    entry.cashbook_synced ? 'text-green-600' : 'text-gray-600'
+                                  }`}>
+                                    {entry.cashbook_synced ? 'Synced to Cash' : 'Not Synced'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              {!entry.cashbook_synced && parseFloat(entry.debit) > 0 && (
+                                <button
+                                  onClick={() => syncToCashbook(entry.id, entry)}
+                                  className="bg-green-50 hover:bg-green-100 text-green-600 p-2 rounded-lg transition-colors"
+                                  title="Sync Debit to Cash Book"
+                                >
+                                  <Wallet className="h-4 w-4" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => startModalEdit(entry)}
+                                className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2 rounded-lg transition-colors"
+                                title="Edit"
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => deleteEntry(entry.id)}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Modal Footer */}
@@ -859,6 +1354,8 @@ export default function KarachiLedgerPage() {
                   setShowPartyModal(false);
                   setModalEditingId(null);
                   setModalFormData({});
+                  setShowAddEntryInModal(false);
+                  setShowCompleteHistory(false);
                 }}
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800"
               >
@@ -973,7 +1470,7 @@ export default function KarachiLedgerPage() {
                         <span className="font-bold text-indigo-700">Rs. {party.balance.toFixed(2)}</span>
                       </div>
                     </div>
-                    
+
                     {/* Hover Icon */}
                     <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-lg">
@@ -1117,7 +1614,7 @@ export default function KarachiLedgerPage() {
                   placeholder="Customer name"
                   className="mt-1"
                 />
-                
+
                 {/* Party Suggestions Dropdown */}
                 {showPartySuggestions && partySuggestions.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-indigo-300 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
@@ -1162,25 +1659,25 @@ export default function KarachiLedgerPage() {
                 />
               </div>
               <div>
-                <Label className="text-sm">Debit (Rs.)</Label>
+                <Label className="text-sm">Debit (Rs.) *Auto-sync to Cashbook*</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.debit}
                   onChange={(e) => setFormData({ ...formData, debit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-1"
+                  className="mt-1 border-2 border-blue-300"
                 />
               </div>
               <div>
-                <Label className="text-sm">Credit (Rs.)</Label>
+                <Label className="text-sm">Credit (Rs.) *No Auto-sync*</Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.credit}
                   onChange={(e) => setFormData({ ...formData, credit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-1"
+                  className="mt-1 border-2 border-gray-300"
                 />
               </div>
             </div>
@@ -1291,6 +1788,17 @@ export default function KarachiLedgerPage() {
                           </td>
                           <td className="border border-gray-300 px-2 md:px-4 py-2 text-center print:hidden">
                             <div className="flex gap-1 justify-center">
+                              {!entry.cashbook_synced && parseFloat(entry.debit) > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => syncToCashbook(entry.id, entry)}
+                                  className="text-green-600 hover:bg-green-50 p-1"
+                                  title="Sync Debit to Cash Book"
+                                >
+                                  <Wallet className="h-3 w-3 md:h-4 md:w-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
