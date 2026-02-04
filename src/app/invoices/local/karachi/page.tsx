@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Plus, Trash2, Printer, ArrowLeft, Save, Edit2, Search, X, CheckCircle2, AlertCircle,
-  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye, Wallet, History
+  Building2, Users, FileText, TrendingUp, TrendingDown, Calendar, Eye, Wallet, History,
+  IndianRupee, CreditCard
 } from 'lucide-react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -285,7 +286,7 @@ export default function KarachiLedgerPage() {
     }
   };
 
-  // **UPDATED: Debit Entry ko Cashbook mein sync karein**
+  // Debit Entry ko Cashbook mein sync karein
   const syncToCashbook = async (transactionId: string, entry: LedgerEntry) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -371,11 +372,6 @@ export default function KarachiLedgerPage() {
       return;
     }
 
-    if (debitVal > 0 && creditVal > 0) {
-      showNotification('Only debit OR credit can be set, not both!', 'error');
-      return;
-    }
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
@@ -394,14 +390,14 @@ export default function KarachiLedgerPage() {
           type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
           city: 'Karachi',
           source: 'LEDGER',
-          cashbook_synced: false // Start with false
+          cashbook_synced: false
         }])
         .select()
         .single();
 
       if (error) throw error;
 
-      // **UPDATED: DEBIT ko auto-sync karein (Credit ko nahi)**
+      // DEBIT ko auto-sync karein
       if (debitVal > 0) {
         await syncToCashbook(newTransaction.id, {
           ...newTransaction,
@@ -433,6 +429,7 @@ export default function KarachiLedgerPage() {
     }
   };
 
+  // Debit aur Credit dono aik sath save honge
   const addEntry = async () => {
     if (!formData.party_name.trim()) {
       showNotification('Please enter party name!', 'error');
@@ -447,13 +444,9 @@ export default function KarachiLedgerPage() {
     const debitVal = parseFloat(formData.debit) || 0;
     const creditVal = parseFloat(formData.credit) || 0;
 
+    // Ab debit aur credit dono zero ho sakte hain (wo alag entries mein save honge)
     if (debitVal === 0 && creditVal === 0) {
       showNotification('Please enter either debit or credit amount!', 'error');
-      return;
-    }
-
-    if (debitVal > 0 && creditVal > 0) {
-      showNotification('Only debit OR credit can be set, not both!', 'error');
       return;
     }
 
@@ -474,36 +467,69 @@ export default function KarachiLedgerPage() {
         }
       }
 
-      // Insert ledger entry
-      const { data: newTransaction, error } = await supabase
-        .from('transactions')
-        .insert([{
+      // Multiple entries create karein agar dono debit aur credit ho
+      const transactionsToInsert = [];
+      
+      // Debit entry (agar hai)
+      if (debitVal > 0) {
+        transactionsToInsert.push({
           user_id: user.id,
           date: formData.date,
           party_id: partyId,
           party_name: formData.party_name,
           particulars: formData.particulars,
           folio: formData.folio,
-          amount: debitVal > 0 ? debitVal : creditVal,
-          type: debitVal > 0 ? 'DEBIT' : 'CREDIT',
+          amount: debitVal,
+          type: 'DEBIT',
           city: 'Karachi',
           source: 'LEDGER',
           cashbook_synced: false
-        }])
-        .select()
-        .single();
+        });
+      }
+
+      // Credit entry (agar hai)
+      if (creditVal > 0) {
+        transactionsToInsert.push({
+          user_id: user.id,
+          date: formData.date,
+          party_id: partyId,
+          party_name: formData.party_name,
+          particulars: formData.particulars,
+          folio: formData.folio,
+          amount: creditVal,
+          type: 'CREDIT',
+          city: 'Karachi',
+          source: 'LEDGER',
+          cashbook_synced: false
+        });
+      }
+
+      if (transactionsToInsert.length === 0) {
+        showNotification('Please enter at least one amount!', 'error');
+        return;
+      }
+
+      // Insert all transactions
+      const { data: newTransactions, error } = await supabase
+        .from('transactions')
+        .insert(transactionsToInsert)
+        .select();
 
       if (error) throw error;
 
-      // **UPDATED: DEBIT ko auto-sync karein (Credit ko nahi)**
-      if (debitVal > 0) {
-        await syncToCashbook(newTransaction.id, {
-          ...newTransaction,
-          debit: debitVal.toString(),
-          credit: creditVal.toString(),
-          balance: '0',
-          type: 'Dr'
-        });
+      // Sirf debit entries ko auto-sync karein
+      if (newTransactions) {
+        for (const transaction of newTransactions) {
+          if (transaction.type === 'DEBIT') {
+            await syncToCashbook(transaction.id, {
+              ...transaction,
+              debit: transaction.amount.toString(),
+              credit: '0',
+              balance: '0',
+              type: 'Dr'
+            });
+          }
+        }
       }
 
       await fetchEntries();
@@ -518,7 +544,7 @@ export default function KarachiLedgerPage() {
         credit: ''
       });
 
-      showNotification('Entry added successfully!', 'success');
+      showNotification(`${transactionsToInsert.length} entry(s) added successfully!`, 'success');
     } catch (error: any) {
       console.error('Error adding entry:', error);
       showNotification('Failed to add entry: ' + error.message, 'error');
@@ -543,11 +569,6 @@ export default function KarachiLedgerPage() {
 
     if (debitVal === 0 && creditVal === 0) {
       showNotification('Please enter either debit or credit amount!', 'error');
-      return;
-    }
-
-    if (debitVal > 0 && creditVal > 0) {
-      showNotification('Only debit OR credit can be set, not both!', 'error');
       return;
     }
 
@@ -602,11 +623,6 @@ export default function KarachiLedgerPage() {
 
     if (debitVal === 0 && creditVal === 0) {
       showNotification('Please enter either debit or credit amount!', 'error');
-      return;
-    }
-
-    if (debitVal > 0 && creditVal > 0) {
-      showNotification('Only debit OR credit can be set, not both!', 'error');
       return;
     }
 
@@ -859,11 +875,11 @@ export default function KarachiLedgerPage() {
   const partyList = getPartyList();
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-3 sm:p-4 md:p-6">
       {/* Success Notification */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 animate-slide-in-right">
-          <div className="bg-green-500 text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3">
+          <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3">
             <CheckCircle2 className="h-6 w-6" />
             <div>
               <p className="font-semibold">Success!</p>
@@ -875,118 +891,148 @@ export default function KarachiLedgerPage() {
 
       {/* Party Transaction Modal */}
       {showPartyModal && selectedPartyData && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white p-6 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="bg-white/20 px-3 py-1 rounded-full text-sm font-semibold">
-                    ID: {selectedPartyData.party_id}
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-0 sm:p-4 overflow-y-auto">
+          <div className="bg-white w-full min-h-screen sm:min-h-[90vh] sm:max-w-6xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+            
+            {/* Modal Header - Blue Theme */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4 sm:p-6 sticky top-0 z-10">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <Users className="h-5 w-5" />
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${
-                    selectedPartyData.type === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
-                  }`}>
-                    {selectedPartyData.type}
-                  </span>
+                  <h2 className="text-lg sm:text-2xl font-bold truncate">{selectedPartyData.party_name}</h2>
                 </div>
-                <h2 className="text-2xl font-bold">{selectedPartyData.party_name}</h2>
-                <div className="flex items-center gap-4 mt-2">
-                  <p className="text-blue-100 text-sm">{selectedPartyData.transaction_count} Ledger Transactions</p>
-                  {selectedPartyData.cashbook_entries && (
-                    <p className="text-green-100 text-sm bg-white/20 px-2 py-1 rounded">
-                      {selectedPartyData.cashbook_entries.length} Cash Entries
-                    </p>
-                  )}
+                <button
+                  onClick={() => {
+                    setShowPartyModal(false);
+                    setModalEditingId(null);
+                    setModalFormData({});
+                    setShowAddEntryInModal(false);
+                    setShowCompleteHistory(false);
+                  }}
+                  className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
+                >
+                  <X className="h-5 w-5 sm:h-6 sm:w-6" />
+                </button>
+              </div>
+              
+              {/* Party Info Row */}
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-semibold">
+                  ID: {selectedPartyData.party_id}
+                </div>
+                <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                  selectedPartyData.type === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'
+                }`}>
+                  {selectedPartyData.type}
+                </span>
+                <div className="text-xs opacity-90">
+                  {selectedPartyData.transaction_count} Ledger • {selectedPartyData.cashbook_entries?.length || 0} Cash
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setShowPartyModal(false);
-                  setModalEditingId(null);
-                  setModalFormData({});
-                  setShowAddEntryInModal(false);
-                  setShowCompleteHistory(false);
-                }}
-                className="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 p-6 bg-gray-50">
-              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 p-3 sm:p-6 bg-gradient-to-br from-blue-50 to-blue-100">
+              {/* Total Debit Card */}
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 rounded-lg sm:rounded-xl p-3 shadow-sm">
+                <div className="flex items-center gap-1 mb-1">
                   <TrendingUp className="h-4 w-4 text-red-600" />
-                  <p className="text-xs text-red-600 font-semibold">Total Debit</p>
+                  <p className="text-xs font-semibold text-red-600">Debit</p>
                 </div>
-                <p className="text-2xl font-bold text-red-700">Rs. {selectedPartyData.total_debit.toFixed(2)}</p>
+                <p className="text-base sm:text-xl font-bold text-red-700 truncate">
+                  Rs. {selectedPartyData.total_debit.toFixed(2)}
+                </p>
               </div>
-              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
+
+              {/* Total Credit Card */}
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 rounded-lg sm:rounded-xl p-3 shadow-sm">
+                <div className="flex items-center gap-1 mb-1">
                   <TrendingDown className="h-4 w-4 text-green-600" />
-                  <p className="text-xs text-green-600 font-semibold">Total Credit</p>
+                  <p className="text-xs font-semibold text-green-600">Credit</p>
                 </div>
-                <p className="text-2xl font-bold text-green-700">Rs. {selectedPartyData.total_credit.toFixed(2)}</p>
+                <p className="text-base sm:text-xl font-bold text-green-700 truncate">
+                  Rs. {selectedPartyData.total_credit.toFixed(2)}
+                </p>
               </div>
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
+
+              {/* Balance Card */}
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg sm:rounded-xl p-3 shadow-sm">
+                <div className="flex items-center gap-1 mb-1">
                   <Calendar className="h-4 w-4 text-blue-600" />
-                  <p className="text-xs text-blue-600 font-semibold">Balance ({selectedPartyData.type})</p>
+                  <p className="text-xs font-semibold text-blue-600 truncate">Bal ({selectedPartyData.type})</p>
                 </div>
-                <p className="text-2xl font-bold text-blue-700">Rs. {selectedPartyData.balance.toFixed(2)}</p>
+                <p className="text-base sm:text-xl font-bold text-blue-700 truncate">
+                  Rs. {selectedPartyData.balance.toFixed(2)}
+                </p>
               </div>
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
+
+              {/* Cash Entries Card */}
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-200 rounded-lg sm:rounded-xl p-3 shadow-sm">
+                <div className="flex items-center gap-1 mb-1">
                   <Wallet className="h-4 w-4 text-purple-600" />
-                  <p className="text-xs text-purple-600 font-semibold">Cash Entries</p>
+                  <p className="text-xs font-semibold text-purple-600 truncate">Cash</p>
                 </div>
-                <p className="text-2xl font-bold text-purple-700">{selectedPartyData.cashbook_entries?.length || 0}</p>
+                <p className="text-base sm:text-xl font-bold text-purple-700">
+                  {selectedPartyData.cashbook_entries?.length || 0}
+                </p>
               </div>
             </div>
 
             {/* History View Toggle */}
-            <div className="flex border-b border-gray-200 bg-white">
+            <div className="flex border-b border-gray-200 bg-white sticky top-0 z-10">
               <button
                 onClick={() => setShowCompleteHistory(false)}
-                className={`flex-1 py-3 text-center font-medium ${!showCompleteHistory ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                className={`flex-1 py-3 text-center text-sm font-medium ${!showCompleteHistory ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
               >
-                Ledger History
+                Ledger
               </button>
               <button
                 onClick={async () => {
                   setShowCompleteHistory(true);
-                  // Fetch complete history
                   const completeHistory = await fetchPartyCompleteHistory(selectedPartyData.party_id);
                   setSelectedPartyData({
                     ...selectedPartyData,
                     complete_history: completeHistory
                   });
                 }}
-                className={`flex-1 py-3 text-center font-medium ${showCompleteHistory ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                className={`flex-1 py-3 text-center text-sm font-medium ${showCompleteHistory ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
               >
-                <div className="flex items-center justify-center gap-2">
+                <div className="flex items-center justify-center gap-1">
                   <History className="h-4 w-4" />
-                  Complete History
+                  <span className="hidden xs:inline">History</span>
                 </div>
               </button>
             </div>
 
-            {/* Add Entry Button */}
-            <div className="px-6 pt-2 pb-4 bg-gray-50 border-b border-gray-200">
+            {/* Add Entry Button Section - Pre-filled form */}
+            <div className="px-3 sm:px-6 pt-3 pb-3 bg-blue-50 border-b border-gray-200">
               {!showAddEntryInModal ? (
                 <Button
-                  onClick={() => setShowAddEntryInModal(true)}
-                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  onClick={() => {
+                    setShowAddEntryInModal(true);
+                    // Pre-fill the form with last entry's data
+                    if (selectedPartyData) {
+                      const lastEntry = selectedPartyData.transactions?.[selectedPartyData.transactions.length - 1];
+                      setModalAddFormData({
+                        date: new Date().toISOString().split('T')[0],
+                        particulars: lastEntry?.particulars || `Transaction for ${selectedPartyData.party_name}`,
+                        folio: lastEntry?.folio || '',
+                        debit: '',
+                        credit: ''
+                      });
+                    }
+                  }}
+                  className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg text-sm py-2"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Entry
                 </Button>
               ) : (
-                <div className="bg-white border-2 border-blue-300 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-bold text-blue-700">Add New Transaction</h4>
+                <div className="bg-white border-2 border-blue-300 rounded-lg sm:rounded-xl p-3 space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="font-bold text-blue-700 text-sm">Add New Transaction for {selectedPartyData?.party_name}</h4>
                     <button
                       onClick={() => {
                         setShowAddEntryInModal(false);
@@ -1001,70 +1047,113 @@ export default function KarachiLedgerPage() {
                       }}
                       className="text-gray-500 hover:text-gray-700"
                     >
-                      <X className="h-5 w-5" />
+                      <X className="h-4 w-4" />
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Pre-filled Info */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-blue-600 font-semibold">Party:</span>
+                        <span className="ml-2 font-bold">{selectedPartyData?.party_name}</span>
+                      </div>
+                      <div>
+                        <span className="text-blue-600 font-semibold">Party ID:</span>
+                        <span className="ml-2 font-bold">{selectedPartyData?.party_id}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
-                      <Label className="text-xs">Date</Label>
+                      <Label className="text-xs font-semibold">Date</Label>
                       <Input
                         type="date"
                         value={modalAddFormData.date}
                         onChange={(e) => setModalAddFormData(prev => ({ ...prev, date: e.target.value }))}
-                        className="mt-1"
+                        className="mt-1 text-sm h-9"
                       />
                     </div>
                     <div>
-                      <Label className="text-xs">Folio</Label>
+                      <Label className="text-xs font-semibold">Folio</Label>
                       <Input
                         value={modalAddFormData.folio}
                         onChange={(e) => setModalAddFormData(prev => ({ ...prev, folio: e.target.value }))}
-                        placeholder="F-001"
-                        className="mt-1"
+                        placeholder="Leave empty if same as before"
+                        className="mt-1 text-sm h-9"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <Label className="text-xs">Particulars *</Label>
+                    <Label className="text-xs font-semibold">Particulars</Label>
                     <Input
                       value={modalAddFormData.particulars}
                       onChange={(e) => setModalAddFormData(prev => ({ ...prev, particulars: e.target.value }))}
-                      placeholder="Description"
-                      className="mt-1"
+                      placeholder="Enter transaction description"
+                      className="mt-1 text-sm h-9"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
-                      <Label className="text-xs">Debit (Rs.) *Auto-sync to Cashbook*</Label>
+                      <Label className="text-xs font-semibold flex items-center gap-1">
+                        <IndianRupee className="h-3 w-3" />
+                        Debit (Auto-sync to Cashbook)
+                      </Label>
                       <Input
                         type="number"
                         step="0.01"
                         value={modalAddFormData.debit}
-                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, debit: e.target.value }))}
+                        onChange={(e) => {
+                          setModalAddFormData(prev => ({ 
+                            ...prev, 
+                            debit: e.target.value,
+                            credit: e.target.value ? '0' : prev.credit
+                          }));
+                        }}
                         placeholder="0.00"
-                        className="mt-1 border-2 border-blue-300"
+                        className="mt-1 text-sm h-9 border-2 border-red-300"
                       />
                     </div>
                     <div>
-                      <Label className="text-xs">Credit (Rs.) *No Auto-sync*</Label>
+                      <Label className="text-xs font-semibold flex items-center gap-1">
+                        <CreditCard className="h-3 w-3" />
+                        Credit (No Auto-sync)
+                      </Label>
                       <Input
                         type="number"
                         step="0.01"
                         value={modalAddFormData.credit}
-                        onChange={(e) => setModalAddFormData(prev => ({ ...prev, credit: e.target.value }))}
+                        onChange={(e) => {
+                          setModalAddFormData(prev => ({ 
+                            ...prev, 
+                            credit: e.target.value,
+                            debit: e.target.value ? '0' : prev.debit
+                          }));
+                        }}
                         placeholder="0.00"
-                        className="mt-1 border-2 border-gray-300"
+                        className="mt-1 text-sm h-9 border-2 border-green-300"
                       />
                     </div>
+                  </div>
+
+                  {/* Info Box */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 text-xs text-blue-600">
+                    <p className="font-semibold mb-1">💡 Quick Tips:</p>
+                    <ul className="list-disc pl-4 space-y-1">
+                      <li>Party Name & ID automatically filled</li>
+                      <li>Folio aur Particulars pehle wale se copy ho gaye hain</li>
+                      <li>Debit entries auto-sync to Cash Book</li>
+                      <li>Credit entries don't sync automatically</li>
+                    </ul>
                   </div>
 
                   <div className="flex gap-2">
                     <Button
                       onClick={addEntryFromModal}
-                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-sm py-2"
                     >
                       <Save className="h-3 w-3 mr-1" />
                       Save Entry
@@ -1082,6 +1171,7 @@ export default function KarachiLedgerPage() {
                         });
                       }}
                       variant="outline"
+                      className="text-sm py-2 border-gray-300"
                     >
                       <X className="h-3 w-3 mr-1" />
                       Cancel
@@ -1092,65 +1182,46 @@ export default function KarachiLedgerPage() {
             </div>
 
             {/* Transaction History */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6">
               {showCompleteHistory ? (
                 <>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <History className="h-5 w-5 text-blue-600" />
-                    Complete Transaction History (Ledger + Cash)
+                  <h3 className="text-sm sm:text-lg font-bold mb-3 flex items-center gap-2">
+                    <History className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
+                    Complete History
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {selectedPartyData.complete_history?.map((entry: any) => (
                       <div
                         key={entry.id}
-                        className={`bg-white border-2 rounded-lg p-4 hover:shadow-md transition-shadow ${
+                        className={`bg-white border-2 rounded-lg p-3 ${
                           entry.source === 'CASHBOOK' ? 'border-green-200 bg-green-50' : 'border-blue-200 bg-blue-50'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <div className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
-                                {formatDate(entry.date)}
-                              </div>
-                              <div className={`px-2 py-1 rounded text-xs font-bold ${
-                                entry.source === 'CASHBOOK' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
-                              }`}>
-                                {entry.source === 'CASHBOOK' ? 'CASH' : 'LEDGER'}
-                              </div>
-                              <div className={`px-2 py-1 rounded text-xs font-bold ${
-                                entry.type === 'DEBIT' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                              }`}>
-                                {entry.type === 'DEBIT' ? 'Dr' : 'Cr'}
-                              </div>
-                              {entry.folio && (
-                                <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
-                                  F: {entry.folio}
-                                </div>
-                              )}
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-1">
+                            <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-bold">
+                              {formatDate(entry.date)}
                             </div>
+                            <div className={`px-2 py-1 rounded text-xs font-bold ${
+                              entry.source === 'CASHBOOK' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {entry.source === 'CASHBOOK' ? 'CASH' : 'LEDGER'}
+                            </div>
+                            <div className={`px-2 py-1 rounded text-xs font-bold ${
+                              entry.type === 'DEBIT' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                            }`}>
+                              {entry.type === 'DEBIT' ? 'Dr' : 'Cr'}
+                            </div>
+                          </div>
 
-                            <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+                          <p className="text-sm font-medium text-gray-800">{entry.particulars}</p>
 
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                              <div>
-                                <span className="text-gray-500">Amount:</span>
-                                <span className="ml-2 font-semibold text-purple-600">
-                                  Rs. {parseFloat(entry.amount).toFixed(2)}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-gray-500">Type:</span>
-                                <span className="ml-2 font-semibold">
-                                  {entry.type === 'DEBIT' ? 'Debit' : 'Credit'}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-gray-500">Source:</span>
-                                <span className="ml-2 font-semibold">
-                                  {entry.source}
-                                </span>
-                              </div>
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <div className="bg-gray-50 px-2 py-1 rounded">
+                              <span className="text-gray-600">Amount: </span>
+                              <span className="font-semibold text-purple-600">
+                                Rs. {parseFloat(entry.amount).toFixed(2)}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1160,21 +1231,22 @@ export default function KarachiLedgerPage() {
                 </>
               ) : (
                 <>
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <Calendar className="h-5 w-5 text-blue-600" />
-                    Ledger Transaction History
+                  <h3 className="text-sm sm:text-lg font-bold mb-3 flex items-center gap-2">
+                    <Calendar className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
+                    Ledger Transactions
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {selectedPartyData.transactions?.map((entry) => (
                       <div
                         key={entry.id}
-                        className="bg-white border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                        className="bg-white border-2 border-gray-200 rounded-lg p-3 hover:shadow-sm transition-shadow"
                       >
                         {modalEditingId === entry.id ? (
                           <div className="space-y-3">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* Edit Form */}
+                            <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <Label className="text-xs">Date</Label>
+                                <Label className="text-xs font-semibold">Date</Label>
                                 <Input
                                   type="date"
                                   value={modalFormData[entry.id]?.date || entry.date}
@@ -1182,35 +1254,37 @@ export default function KarachiLedgerPage() {
                                     ...prev,
                                     [entry.id]: { ...(prev[entry.id] || { particulars: '', folio: '', debit: '', credit: '' }), date: e.target.value }
                                   }))}
-                                  className="mt-1"
+                                  className="mt-1 text-sm h-8"
                                 />
                               </div>
                               <div>
-                                <Label className="text-xs">Folio</Label>
+                                <Label className="text-xs font-semibold">Folio</Label>
                                 <Input
                                   value={modalFormData[entry.id]?.folio || entry.folio}
                                   onChange={(e) => setModalFormData(prev => ({
                                     ...prev,
                                     [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', debit: '', credit: '' }), folio: e.target.value }
                                   }))}
-                                  className="mt-1"
+                                  className="mt-1 text-sm h-8"
                                 />
                               </div>
                             </div>
+                            
                             <div>
-                              <Label className="text-xs">Particulars</Label>
+                              <Label className="text-xs font-semibold">Particulars</Label>
                               <Input
                                 value={modalFormData[entry.id]?.particulars || entry.particulars}
                                 onChange={(e) => setModalFormData(prev => ({
                                   ...prev,
                                   [entry.id]: { ...(prev[entry.id] || { date: '', folio: '', debit: '', credit: '' }), particulars: e.target.value }
                                 }))}
-                                className="mt-1"
+                                className="mt-1 text-sm h-8"
                               />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            
+                            <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <Label className="text-xs">Debit (Rs.) *Auto-sync*</Label>
+                                <Label className="text-xs font-semibold">Debit</Label>
                                 <Input
                                   type="number"
                                   step="0.01"
@@ -1219,11 +1293,11 @@ export default function KarachiLedgerPage() {
                                     ...prev,
                                     [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', credit: '' }), debit: e.target.value }
                                   }))}
-                                  className="mt-1 border-2 border-blue-300"
+                                  className="mt-1 text-sm h-8 border-2 border-red-300"
                                 />
                               </div>
                               <div>
-                                <Label className="text-xs">Credit (Rs.) *No Sync*</Label>
+                                <Label className="text-xs font-semibold">Credit</Label>
                                 <Input
                                   type="number"
                                   step="0.01"
@@ -1232,14 +1306,15 @@ export default function KarachiLedgerPage() {
                                     ...prev,
                                     [entry.id]: { ...(prev[entry.id] || { date: '', particulars: '', folio: '', debit: '' }), credit: e.target.value }
                                   }))}
-                                  className="mt-1 border-2 border-gray-300"
+                                  className="mt-1 text-sm h-8 border-2 border-green-300"
                                 />
                               </div>
                             </div>
+                            
                             <div className="flex gap-2">
                               <Button
                                 onClick={() => updateModalEntry(entry.id)}
-                                className="bg-green-600 hover:bg-green-700"
+                                className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-xs py-1 h-8"
                                 size="sm"
                               >
                                 <Save className="h-3 w-3 mr-1" />
@@ -1249,6 +1324,7 @@ export default function KarachiLedgerPage() {
                                 onClick={() => cancelModalEdit(entry.id)}
                                 variant="outline"
                                 size="sm"
+                                className="text-xs py-1 h-8 border-gray-300"
                               >
                                 <X className="h-3 w-3 mr-1" />
                                 Cancel
@@ -1256,87 +1332,79 @@ export default function KarachiLedgerPage() {
                             </div>
                           </div>
                         ) : (
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
-                                  {formatDate(entry.date)}
-                                </div>
-                                {entry.folio && (
-                                  <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
-                                    F: {entry.folio}
-                                  </div>
-                                )}
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                  entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                                }`}>
-                                  {entry.type}
-                                </span>
-                                {entry.cashbook_synced && (
-                                  <div className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold flex items-center gap-1">
-                                    <Wallet className="h-3 w-3" />
-                                    Cash
-                                  </div>
-                                )}
+                          <div className="space-y-2">
+                            {/* Entry Display */}
+                            <div className="flex flex-wrap items-center gap-1">
+                              <div className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">
+                                {formatDate(entry.date)}
                               </div>
+                              {entry.folio && (
+                                <div className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs">
+                                  F: {entry.folio}
+                                </div>
+                              )}
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                              }`}>
+                                {entry.type}
+                              </span>
+                              {entry.cashbook_synced && (
+                                <div className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold flex items-center gap-1">
+                                  <Wallet className="h-3 w-3" />
+                                  Cash
+                                </div>
+                              )}
+                            </div>
 
-                              <p className="text-gray-800 font-medium mb-2">{entry.particulars}</p>
+                            <p className="text-sm font-medium text-gray-800">{entry.particulars}</p>
 
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                                <div>
-                                  <span className="text-gray-500">Debit:</span>
-                                  <span className="ml-2 font-semibold text-red-600">
-                                    {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Credit:</span>
-                                  <span className="ml-2 font-semibold text-green-600">
-                                    {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Balance:</span>
-                                  <span className="ml-2 font-semibold text-blue-600">
-                                    Rs. {entry.balance}
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Status:</span>
-                                  <span className={`ml-2 font-semibold ${
-                                    entry.cashbook_synced ? 'text-green-600' : 'text-gray-600'
-                                  }`}>
-                                    {entry.cashbook_synced ? 'Synced to Cash' : 'Not Synced'}
-                                  </span>
-                                </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="bg-red-50 p-2 rounded">
+                                <span className="text-gray-600">Debit:</span>
+                                <span className="ml-1 font-semibold text-red-600">
+                                  {parseFloat(entry.debit) > 0 ? `Rs. ${entry.debit}` : '-'}
+                                </span>
+                              </div>
+                              <div className="bg-green-50 p-2 rounded">
+                                <span className="text-gray-600">Credit:</span>
+                                <span className="ml-1 font-semibold text-green-600">
+                                  {parseFloat(entry.credit) > 0 ? `Rs. ${entry.credit}` : '-'}
+                                </span>
                               </div>
                             </div>
 
-                            {/* Action Buttons */}
-                            <div className="flex gap-2">
-                              {!entry.cashbook_synced && parseFloat(entry.debit) > 0 && (
+                            <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                              <div className="text-xs">
+                                <span className="text-gray-600">Balance: </span>
+                                <span className="font-semibold text-blue-600">Rs. {entry.balance}</span>
+                              </div>
+                              
+                              {/* Action Buttons */}
+                              <div className="flex gap-1">
+                                {!entry.cashbook_synced && parseFloat(entry.debit) > 0 && (
+                                  <button
+                                    onClick={() => syncToCashbook(entry.id, entry)}
+                                    className="bg-green-50 hover:bg-green-100 text-green-600 p-1 rounded border border-green-200"
+                                    title="Sync to Cash"
+                                  >
+                                    <Wallet className="h-3 w-3" />
+                                  </button>
+                                )}
                                 <button
-                                  onClick={() => syncToCashbook(entry.id, entry)}
-                                  className="bg-green-50 hover:bg-green-100 text-green-600 p-2 rounded-lg transition-colors"
-                                  title="Sync Debit to Cash Book"
+                                  onClick={() => startModalEdit(entry)}
+                                  className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-1 rounded border border-blue-200"
+                                  title="Edit"
                                 >
-                                  <Wallet className="h-4 w-4" />
+                                  <Edit2 className="h-3 w-3" />
                                 </button>
-                              )}
-                              <button
-                                onClick={() => startModalEdit(entry)}
-                                className="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2 rounded-lg transition-colors"
-                                title="Edit"
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => deleteEntry(entry.id)}
-                                className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-lg transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                                <button
+                                  onClick={() => deleteEntry(entry.id)}
+                                  className="bg-red-50 hover:bg-red-100 text-red-600 p-1 rounded border border-red-200"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                           </div>
                         )}
@@ -1348,7 +1416,7 @@ export default function KarachiLedgerPage() {
             </div>
 
             {/* Modal Footer */}
-            <div className="border-t border-gray-200 p-4 bg-gray-50">
+            <div className="border-t border-gray-200 p-3 bg-gradient-to-r from-blue-50 to-blue-100">
               <Button
                 onClick={() => {
                   setShowPartyModal(false);
@@ -1357,7 +1425,7 @@ export default function KarachiLedgerPage() {
                   setShowAddEntryInModal(false);
                   setShowCompleteHistory(false);
                 }}
-                className="w-full bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800"
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg text-sm py-2"
               >
                 Close
               </Button>
@@ -1367,8 +1435,8 @@ export default function KarachiLedgerPage() {
       )}
 
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-blue-800 to-indigo-900 rounded-2xl shadow-xl p-4 md:p-6 text-white print:rounded-none">
+        {/* Header - Blue Theme */}
+        <div className="bg-gradient-to-r from-blue-800 to-blue-900 rounded-2xl shadow-xl p-4 md:p-6 text-white print:rounded-none">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
             <div className="flex items-center gap-3">
               <Link href="/invoices/local" className="print:hidden">
@@ -1383,7 +1451,7 @@ export default function KarachiLedgerPage() {
                 </div>
                 <div>
                   <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold">AI FASHION KARACHI LEDGER</h1>
-                  <p className="text-indigo-100 text-sm mt-1">
+                  <p className="text-blue-100 text-sm mt-1">
                     {selectedParty ? `Party: ${entries.find(e => e.party_id === selectedParty)?.party_name} (${selectedParty})` : `Karachi - ${new Date(currentDate).getFullYear()}`}
                   </p>
                 </div>
@@ -1393,7 +1461,7 @@ export default function KarachiLedgerPage() {
               <Button
                 onClick={() => window.print()}
                 size="sm"
-                className="print:hidden bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                className="print:hidden bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700"
               >
                 <Printer className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">Print</span>
@@ -1417,7 +1485,7 @@ export default function KarachiLedgerPage() {
             </div>
             <div>
               <Label className="text-sm font-semibold text-white/80">Total Parties:</Label>
-              <div className="text-lg sm:text-xl font-bold text-indigo-200 mt-1">
+              <div className="text-lg sm:text-xl font-bold text-blue-200 mt-1">
                 {partyList.length} Parties Registered
               </div>
             </div>
@@ -1426,8 +1494,8 @@ export default function KarachiLedgerPage() {
 
         {/* Party Quick Stats */}
         {!selectedParty && partyList.length > 0 && (
-          <Card className="print:hidden">
-            <CardHeader className="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-4">
+          <Card className="print:hidden shadow-lg">
+            <CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-4">
               <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
                 <Users className="h-5 w-5" />
                 Party Overview ({partyList.length} Parties)
@@ -1439,11 +1507,11 @@ export default function KarachiLedgerPage() {
                   <div
                     key={party.party_id}
                     onClick={() => openPartyModal(party.party_id)}
-                    className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-indigo-200 rounded-lg p-4 hover:shadow-lg transition-all cursor-pointer group relative"
+                    className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-lg p-4 hover:shadow-lg transition-all cursor-pointer group relative hover:border-blue-300"
                   >
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
-                        <p className="text-xs text-indigo-600 font-semibold">ID: {party.party_id}</p>
+                        <p className="text-xs text-blue-600 font-semibold">ID: {party.party_id}</p>
                         <p className="font-bold text-gray-800 text-sm">{party.party_name}</p>
                       </div>
                       <span className={`px-2 py-1 rounded text-xs font-bold ${
@@ -1465,15 +1533,15 @@ export default function KarachiLedgerPage() {
                         <span className="text-green-600">Credit:</span>
                         <span className="font-semibold">Rs. {party.total_credit.toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between pt-2 border-t border-indigo-200">
+                      <div className="flex justify-between pt-2 border-t border-blue-200">
                         <span className="text-gray-800 font-semibold">Balance:</span>
-                        <span className="font-bold text-indigo-700">Rs. {party.balance.toFixed(2)}</span>
+                        <span className="font-bold text-blue-700">Rs. {party.balance.toFixed(2)}</span>
                       </div>
                     </div>
 
                     {/* Hover Icon */}
                     <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="bg-indigo-600 text-white p-2 rounded-lg shadow-lg">
+                      <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-2 rounded-lg shadow-lg">
                         <Eye className="h-4 w-4" />
                       </div>
                     </div>
@@ -1486,9 +1554,9 @@ export default function KarachiLedgerPage() {
 
         {/* Selected Party Banner */}
         {selectedParty && (
-          <Card className="print:hidden bg-gradient-to-r from-green-500 to-emerald-600 text-white">
+          <Card className="print:hidden bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg">
             <CardContent className="p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <FileText className="h-6 w-6" />
                   <div>
@@ -1501,7 +1569,7 @@ export default function KarachiLedgerPage() {
                 <Button
                   onClick={clearPartyFilter}
                   variant="outline"
-                  className="bg-white/20 hover:bg-white/30 border-white/40 text-white"
+                  className="bg-white/20 hover:bg-white/30 border-white/40 text-white mt-2 sm:mt-0"
                 >
                   <X className="h-4 w-4 mr-2" />
                   Show All
@@ -1512,7 +1580,7 @@ export default function KarachiLedgerPage() {
         )}
 
         {/* Search Bar */}
-        <Card className="print:hidden">
+        <Card className="print:hidden shadow-lg">
           <CardContent className="pt-6">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 z-10" />
@@ -1522,7 +1590,7 @@ export default function KarachiLedgerPage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => searchQuery && setShowSuggestions(true)}
-                className="pl-10 pr-10 h-12 border-2 border-gray-300 focus:border-indigo-500"
+                className="pl-10 pr-10 h-12 border-2 border-gray-300 focus:border-blue-500"
               />
               {searchQuery && (
                 <button
@@ -1538,7 +1606,7 @@ export default function KarachiLedgerPage() {
 
               {/* Autocomplete Suggestions */}
               {showSuggestions && suggestions.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-gray-300 rounded-lg shadow-lg z-20 max-h-60 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white border-2 border-gray-300 rounded-lg shadow-xl z-20 max-h-60 overflow-y-auto">
                   {suggestions.map((suggestion, index) => (
                     <button
                       key={index}
@@ -1546,7 +1614,7 @@ export default function KarachiLedgerPage() {
                         setSearchQuery(suggestion);
                         setShowSuggestions(false);
                       }}
-                      className="w-full text-left px-4 py-3 hover:bg-indigo-50 border-b border-gray-200 last:border-b-0 transition-colors"
+                      className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-gray-200 last:border-b-0 transition-colors"
                     >
                       <div className="flex items-center gap-2">
                         <Search className="h-4 w-4 text-gray-400" />
@@ -1559,13 +1627,13 @@ export default function KarachiLedgerPage() {
             </div>
             {searchQuery && (
               <div className="flex items-center gap-2 mt-3">
-                <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium">
+                <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
                   {filteredEntries.length} result(s) found
                 </div>
                 {filteredEntries.length > 0 && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="text-sm text-indigo-600 hover:text-indigo-800 underline"
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
                   >
                     Clear search
                   </button>
@@ -1575,54 +1643,64 @@ export default function KarachiLedgerPage() {
           </CardContent>
         </Card>
 
-        {/* Add/Edit Entry Form */}
-        <Card className="print:hidden">
-          <CardHeader className={`${editingId ? 'bg-green-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600'} text-white p-4`}>
+        {/* Add/Edit Entry Form - RESPONSIVE FIXED */}
+        <Card className="print:hidden shadow-xl">
+          <CardHeader className={`${editingId ? 'bg-gradient-to-r from-green-600 to-green-700' : 'bg-gradient-to-r from-blue-600 to-blue-700'} text-white p-4`}>
             <CardTitle className="text-lg sm:text-xl flex items-center gap-2">
               {editingId ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
               {editingId ? 'Edit Entry' : 'Add New Entry'}
+              <span className="text-sm font-normal ml-2 opacity-90">
+                (Debit + Credit both can be saved together)
+              </span>
             </CardTitle>
           </CardHeader>
-          <CardContent className="p-4 md:pt-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 md:gap-4">
-              <div className="lg:col-span-1">
-                <Label className="text-sm">Date</Label>
+          <CardContent className="p-4 md:p-6">
+            {/* Responsive Grid Layout */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 md:gap-4">
+              
+              {/* Date - 2 columns on large screens */}
+              <div className="lg:col-span-2">
+                <Label className="text-sm font-semibold mb-1 block">Date</Label>
                 <Input
                   type="date"
                   value={formData.date}
                   onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  className="mt-1"
+                  className="w-full border-gray-300 focus:border-blue-500"
                 />
               </div>
-              <div className="relative">
-                <Label className="text-sm">Party ID</Label>
+
+              {/* Party ID - 2 columns on large screens */}
+              <div className="lg:col-span-2">
+                <Label className="text-sm font-semibold mb-1 block">Party ID</Label>
                 <Input
                   value={formData.party_id}
                   onChange={(e) => setFormData({ ...formData, party_id: e.target.value })}
                   placeholder="Auto"
-                  className="mt-1"
+                  className="w-full border-gray-300 focus:border-blue-500"
                   maxLength={3}
                   readOnly={!editingId}
                 />
               </div>
-              <div className="sm:col-span-2 lg:col-span-1 relative">
-                <Label className="text-sm">Party Name *</Label>
+
+              {/* Party Name - 3 columns on large screens with suggestions */}
+              <div className="lg:col-span-3 relative">
+                <Label className="text-sm font-semibold mb-1 block">Party Name *</Label>
                 <Input
                   value={formData.party_name}
                   onChange={(e) => setFormData({ ...formData, party_name: e.target.value })}
                   onFocus={() => formData.party_name && setShowPartySuggestions(true)}
                   placeholder="Customer name"
-                  className="mt-1"
+                  className="w-full border-gray-300 focus:border-blue-500"
                 />
 
                 {/* Party Suggestions Dropdown */}
                 {showPartySuggestions && partySuggestions.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-indigo-300 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-blue-300 rounded-lg shadow-xl z-30 max-h-48 overflow-y-auto">
                     {partySuggestions.map((party) => (
                       <button
                         key={party.party_id}
                         onClick={() => selectPartyFromSuggestion(party)}
-                        className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-gray-200 last:border-b-0"
+                        className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-200 last:border-b-0 transition-colors"
                       >
                         <div className="flex items-center justify-between">
                           <div>
@@ -1640,61 +1718,109 @@ export default function KarachiLedgerPage() {
                   </div>
                 )}
               </div>
-              <div className="sm:col-span-2 lg:col-span-1">
-                <Label className="text-sm">Particulars *</Label>
+
+              {/* Particulars - 3 columns on large screens */}
+              <div className="lg:col-span-3">
+                <Label className="text-sm font-semibold mb-1 block">Particulars *</Label>
                 <Input
                   value={formData.particulars}
                   onChange={(e) => setFormData({ ...formData, particulars: e.target.value })}
                   placeholder="Description"
-                  className="mt-1"
+                  className="w-full border-gray-300 focus:border-blue-500"
                 />
               </div>
-              <div>
-                <Label className="text-sm">Folio</Label>
+
+              {/* Folio - 2 columns on large screens */}
+              <div className="lg:col-span-2">
+                <Label className="text-sm font-semibold mb-1 block">Folio</Label>
                 <Input
                   value={formData.folio}
                   onChange={(e) => setFormData({ ...formData, folio: e.target.value })}
                   placeholder="F-001"
-                  className="mt-1"
+                  className="w-full border-gray-300 focus:border-blue-500"
                 />
               </div>
-              <div>
-                <Label className="text-sm">Debit (Rs.) *Auto-sync to Cashbook*</Label>
+            </div>
+
+            {/* Second Row for Debit & Credit */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 md:gap-4 mt-4">
+              
+              {/* Debit - 3 columns on large screens */}
+              <div className="lg:col-span-3">
+                <Label className="text-sm font-semibold mb-1 block flex items-center gap-1">
+                  <IndianRupee className="h-4 w-4" />
+                  Debit (Rs.) *Auto-sync to Cashbook*
+                </Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.debit}
                   onChange={(e) => setFormData({ ...formData, debit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-1 border-2 border-blue-300"
+                  className="w-full border-2 border-red-300 focus:border-red-500"
                 />
               </div>
-              <div>
-                <Label className="text-sm">Credit (Rs.) *No Auto-sync*</Label>
+
+              {/* Credit - 3 columns on large screens */}
+              <div className="lg:col-span-3">
+                <Label className="text-sm font-semibold mb-1 block flex items-center gap-1">
+                  <CreditCard className="h-4 w-4" />
+                  Credit (Rs.) *No Auto-sync*
+                </Label>
                 <Input
                   type="number"
                   step="0.01"
                   value={formData.credit}
                   onChange={(e) => setFormData({ ...formData, credit: e.target.value })}
                   placeholder="0.00"
-                  className="mt-1 border-2 border-gray-300"
+                  className="w-full border-2 border-green-300 focus:border-green-500"
                 />
               </div>
+
+              {/* Info Note - 6 columns on large screens */}
+              <div className="lg:col-span-6">
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 h-full">
+                  <div className="flex items-start gap-2">
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <AlertCircle className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-blue-800 mb-1">Important Notes:</p>
+                      <ul className="text-xs text-blue-600 space-y-1">
+                        <li className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                          <span>Debit entries auto-sync to Cash Book</span>
+                        </li>
+                        <li className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                          <span>Credit entries do NOT auto-sync</span>
+                        </li>
+                        <li className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                          <span>Both Debit & Credit can be saved together</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="flex gap-2 mt-4">
+
+            {/* Buttons */}
+            <div className="flex gap-2 mt-6">
               {editingId ? (
                 <>
-                  <Button onClick={updateEntry} className="bg-green-600 hover:bg-green-700">
+                  <Button onClick={updateEntry} className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 shadow-md">
                     <Save className="h-4 w-4 mr-2" />
                     Update Entry
                   </Button>
-                  <Button onClick={cancelEdit} variant="outline">
+                  <Button onClick={cancelEdit} variant="outline" className="border-gray-300">
                     <X className="h-4 w-4 mr-2" />
                     Cancel
                   </Button>
                 </>
               ) : (
-                <Button onClick={addEntry} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
+                <Button onClick={addEntry} className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-lg w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Entry
                 </Button>
@@ -1704,96 +1830,96 @@ export default function KarachiLedgerPage() {
         </Card>
 
         {/* Ledger Table */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="bg-white rounded-lg shadow-xl overflow-hidden border border-gray-200">
           {loading ? (
             <div className="p-12 text-center">
-              <div className="inline-block w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+              <div className="inline-block w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
               <p className="mt-4 text-gray-600">Loading entries...</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse min-w-[900px]">
                 <thead>
-                  <tr className="bg-gray-800 text-white">
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Date</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Party ID</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Party Name</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Particulars</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Folio</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
+                  <tr className="bg-gradient-to-r from-blue-900 to-blue-800 text-white">
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Date</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Party ID</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Party Name</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-left text-xs md:text-sm font-semibold">Particulars</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Folio</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
                       Debit<br/>
                       <span className="text-xs font-normal">Rs. Ps.</span>
                     </th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
                       Credit<br/>
                       <span className="text-xs font-normal">Rs. Ps.</span>
                     </th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Dr/Cr</th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold">Dr/Cr</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-right text-xs md:text-sm font-semibold">
                       Balance<br/>
                       <span className="text-xs font-normal">Rs. Ps.</span>
                     </th>
-                    <th className="border border-gray-600 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold print:hidden">Actions</th>
+                    <th className="border border-gray-700 px-2 md:px-4 py-3 text-center text-xs md:text-sm font-semibold print:hidden">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEntries.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="border border-gray-300 px-4 py-8 text-center text-gray-500 text-sm">
-                        {searchQuery || selectedParty ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <AlertCircle className="h-12 w-12 text-gray-400" />
-                            <p className="text-lg font-medium">No entries found</p>
-                            <p className="text-sm">Try adjusting your search criteria</p>
+                      <td colSpan={10} className="border border-gray-300 px-4 py-12 text-center text-gray-500">
+                        <div className="flex flex-col items-center gap-4">
+                          <AlertCircle className="h-16 w-16 text-gray-300" />
+                          <div>
+                            <p className="text-lg font-medium text-gray-600">No entries found</p>
+                            <p className="text-sm text-gray-500 mt-1">
+                              {searchQuery || selectedParty ? 'Try adjusting your search criteria' : 'Add your first transaction above'}
+                            </p>
                           </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-3">
-                            <Plus className="h-12 w-12 text-gray-400" />
-                            <p className="text-lg font-medium">No entries yet</p>
-                            <p className="text-sm">Add your first transaction above</p>
-                          </div>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   ) : (
                     <>
                       {(selectedParty ? calculatePartyBalance(selectedParty) : calculateBalance(filteredEntries)).map((entry, index) => (
-                        <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-indigo-50 transition-colors`}>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">
-                            <div className="font-medium">{formatDate(entry.date)}</div>
+                        <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50 transition-colors`}>
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-xs md:text-sm">
+                            <div className="font-medium text-gray-700">{formatDate(entry.date)}</div>
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">
-                            <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-semibold">
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-center text-xs md:text-sm">
+                            <span className="bg-gradient-to-r from-blue-100 to-blue-200 text-blue-700 px-3 py-1 rounded-full font-semibold text-xs">
                               {entry.party_id}
                             </span>
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm font-semibold text-gray-700">
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-xs md:text-sm font-semibold text-gray-700">
                             {entry.party_name}
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-xs md:text-sm">{entry.particulars}</td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center text-xs md:text-sm">{entry.folio || '-'}</td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
-                            {parseFloat(entry.debit) > 0 ? entry.debit : '-'}
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-xs md:text-sm">{entry.particulars}</td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-center text-xs md:text-sm">{entry.folio || '-'}</td>
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-right font-mono text-xs md:text-sm">
+                            {parseFloat(entry.debit) > 0 ? (
+                              <span className="text-red-600 font-semibold">{entry.debit}</span>
+                            ) : '-'}
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono text-xs md:text-sm">
-                            {parseFloat(entry.credit) > 0 ? entry.credit : '-'}
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-right font-mono text-xs md:text-sm">
+                            {parseFloat(entry.credit) > 0 ? (
+                              <span className="text-green-600 font-semibold">{entry.credit}</span>
+                            ) : '-'}
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center font-semibold text-xs md:text-sm">
-                            <span className={`px-2 py-1 rounded ${entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-center font-semibold text-xs md:text-sm">
+                            <span className={`px-3 py-1 rounded-full text-xs ${entry.type === 'Dr' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                               {entry.type}
                             </span>
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-right font-mono font-semibold text-xs md:text-sm">
-                            {entry.balance}
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-right font-mono font-semibold text-xs md:text-sm">
+                            <span className="text-blue-600">{entry.balance}</span>
                           </td>
-                          <td className="border border-gray-300 px-2 md:px-4 py-2 text-center print:hidden">
+                          <td className="border border-gray-300 px-2 md:px-4 py-3 text-center print:hidden">
                             <div className="flex gap-1 justify-center">
                               {!entry.cashbook_synced && parseFloat(entry.debit) > 0 && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => syncToCashbook(entry.id, entry)}
-                                  className="text-green-600 hover:bg-green-50 p-1"
+                                  className="text-green-600 hover:bg-green-50 p-1 border border-green-200"
                                   title="Sync Debit to Cash Book"
                                 >
                                   <Wallet className="h-3 w-3 md:h-4 md:w-4" />
@@ -1803,7 +1929,7 @@ export default function KarachiLedgerPage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => startEdit(entry)}
-                                className="text-blue-600 hover:bg-blue-50 p-1"
+                                className="text-blue-600 hover:bg-blue-50 p-1 border border-blue-200"
                               >
                                 <Edit2 className="h-3 w-3 md:h-4 md:w-4" />
                               </Button>
@@ -1811,7 +1937,7 @@ export default function KarachiLedgerPage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => deleteEntry(entry.id)}
-                                className="text-red-600 hover:bg-red-50 p-1"
+                                className="text-red-600 hover:bg-red-50 p-1 border border-red-200"
                               >
                                 <Trash2 className="h-3 w-3 md:h-4 md:w-4" />
                               </Button>
@@ -1821,7 +1947,7 @@ export default function KarachiLedgerPage() {
                       ))}
 
                       {/* Total Row */}
-                      <tr className="bg-gradient-to-r from-yellow-300 to-yellow-400 font-bold">
+                      <tr className="bg-gradient-to-r from-yellow-400 to-yellow-500 font-bold">
                         <td colSpan={5} className="border-2 border-gray-800 px-2 md:px-4 py-3 text-right text-sm md:text-lg">
                           {selectedParty ? `TOTAL (${entries.find(e => e.party_id === selectedParty)?.party_name})` : 'TOTAL'}
                         </td>
@@ -1832,7 +1958,7 @@ export default function KarachiLedgerPage() {
                           {totals.totalCredit}
                         </td>
                         <td className="border-2 border-gray-800 px-2 md:px-4 py-3 text-center text-sm md:text-lg">
-                          <span className={`px-3 py-1 rounded ${totals.finalType === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
+                          <span className={`px-4 py-2 rounded-full ${totals.finalType === 'Dr' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>
                             {totals.finalType}
                           </span>
                         </td>
@@ -1848,7 +1974,7 @@ export default function KarachiLedgerPage() {
             </div>
           )}
           {filteredEntries.length > 0 && (
-            <div className="md:hidden bg-gray-100 px-4 py-2 text-xs text-gray-600 text-center">
+            <div className="md:hidden bg-gradient-to-r from-blue-100 to-blue-200 px-4 py-2 text-xs text-gray-600 text-center border-t border-gray-300">
               ← Scroll horizontally to view all columns →
             </div>
           )}
@@ -1856,31 +1982,31 @@ export default function KarachiLedgerPage() {
 
         {/* Summary Section */}
         {filteredEntries.length > 0 && (
-          <div className="bg-white rounded-lg shadow p-4 md:p-6 print:break-before-page">
-            <h2 className="text-lg md:text-xl font-bold mb-4">
+          <div className="bg-white rounded-xl shadow-lg p-4 md:p-6 print:break-before-page border border-gray-200">
+            <h2 className="text-lg md:text-xl font-bold mb-4 text-gray-800">
               {selectedParty ? `Party Summary - ${entries.find(e => e.party_id === selectedParty)?.party_name}` : 'Monthly Summary'}
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
-              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <TrendingUp className="h-5 w-5 text-red-600" />
-                  <p className="text-xs sm:text-sm text-red-600 font-medium">Total Debit</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-xl p-4 md:p-6 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <TrendingUp className="h-6 w-6 text-red-600" />
+                  <p className="text-sm md:text-base text-red-600 font-semibold">Total Debit</p>
                 </div>
-                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-red-700">Rs. {totals.totalDebit}</p>
+                <p className="text-2xl md:text-4xl font-bold text-red-700">Rs. {totals.totalDebit}</p>
               </div>
-              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <TrendingDown className="h-5 w-5 text-green-600" />
-                  <p className="text-xs sm:text-sm text-green-600 font-medium">Total Credit</p>
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-xl p-4 md:p-6 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <TrendingDown className="h-6 w-6 text-green-600" />
+                  <p className="text-sm md:text-base text-green-600 font-semibold">Total Credit</p>
                 </div>
-                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-green-700">Rs. {totals.totalCredit}</p>
+                <p className="text-2xl md:text-4xl font-bold text-green-700">Rs. {totals.totalCredit}</p>
               </div>
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-lg p-4 text-center shadow-md hover:shadow-lg transition-shadow">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <Calendar className="h-5 w-5 text-blue-600" />
-                  <p className="text-xs sm:text-sm text-blue-600 font-medium">Final Balance ({totals.finalType})</p>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-xl p-4 md:p-6 text-center shadow-md hover:shadow-lg transition-shadow">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <Calendar className="h-6 w-6 text-blue-600" />
+                  <p className="text-sm md:text-base text-blue-600 font-semibold">Final Balance ({totals.finalType})</p>
                 </div>
-                <p className="text-xl sm:text-2xl md:text-3xl font-bold text-blue-700">Rs. {totals.finalBalance}</p>
+                <p className="text-2xl md:text-4xl font-bold text-blue-700">Rs. {totals.finalBalance}</p>
               </div>
             </div>
           </div>

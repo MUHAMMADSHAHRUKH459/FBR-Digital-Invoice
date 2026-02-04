@@ -101,51 +101,54 @@ export default function CashBookPage() {
   }, [searchQuery, entries]);
 
   const fetchEntries = async () => {
-  try {
-    setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) {
-      showNotification('Please login first!', 'error');
-      return;
+      if (!user) {
+        showNotification('Please login first!', 'error');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('source', 'CASHBOOK')
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const formattedData = data?.map(item => ({
+        id: item.id,
+        date: item.date,
+        // FIXED: Swap ledger debit/credit for cashbook display
+        // Ledger DEBIT = Cashbook PAYMENT (Money Out)
+        // Ledger CREDIT = Cashbook RECEIPT (Money In)
+        type: (item.type === 'DEBIT' ? 'payment' : 'receipt') as 'receipt' | 'payment',
+        personName: item.party_name,
+        ledgerFolio: item.folio || '',
+        amount: parseFloat(item.amount).toFixed(2),
+        cityReference: item.city,
+        particulars: item.particulars,
+        user_id: item.user_id,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        source: item.source,
+        linked_transaction_id: item.linked_transaction_id,
+        is_cashbook_entry: item.is_cashbook_entry
+      })) || [];
+
+      setEntries(formattedData);
+      setFilteredEntries(formattedData);
+    } catch (error: any) {
+      console.error('Error fetching entries:', error);
+      showNotification('Failed to load entries: ' + error.message, 'error');
+    } finally {
+      setLoading(false);
     }
-
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('source', 'CASHBOOK')
-      .order('date', { ascending: true })
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-
-    const formattedData = data?.map(item => ({
-      id: item.id,
-      date: item.date,
-      type: (item.type === 'CREDIT' ? 'receipt' : 'payment') as 'receipt' | 'payment', // ✅ Type cast karein
-      personName: item.party_name,
-      ledgerFolio: item.folio || '',
-      amount: parseFloat(item.amount).toFixed(2),
-      cityReference: item.city,
-      particulars: item.particulars,
-      user_id: item.user_id,
-      created_at: item.created_at,
-      updated_at: item.updated_at,
-      source: item.source,
-      linked_transaction_id: item.linked_transaction_id,
-      is_cashbook_entry: item.is_cashbook_entry
-    })) || [];
-
-    setEntries(formattedData);
-    setFilteredEntries(formattedData);
-  } catch (error: any) {
-    console.error('Error fetching entries:', error);
-    showNotification('Failed to load entries: ' + error.message, 'error');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     if (type === 'success') {
@@ -157,7 +160,7 @@ export default function CashBookPage() {
     }
   };
 
-  // NEW FUNCTION: Fetch person complete history
+  // Fetch person complete history
   const fetchPersonCompleteHistory = async (personName: string) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -179,7 +182,8 @@ export default function CashBookPage() {
         let type: 'receipt' | 'payment' | 'ledger_debit' | 'ledger_credit';
         
         if (item.source === 'CASHBOOK') {
-          type = item.type === 'CREDIT' ? 'receipt' : 'payment';
+          // FIXED: For cashbook display, swap the types
+          type = item.type === 'DEBIT' ? 'payment' : 'receipt'; // Changed this line
         } else {
           type = item.type === 'DEBIT' ? 'ledger_debit' : 'ledger_credit';
         }
@@ -236,6 +240,19 @@ export default function CashBookPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
+      // **IMPORTANT: Database mein correct mapping rakho**
+      // Cashbook:
+      // - Receipt = CREDIT (Money in)
+      // - Payment = DEBIT (Money out)
+      // But display ke liye hum swapped karte hain:
+      // - Ledger Debit = Cashbook Payment
+      // - Ledger Credit = Cashbook Receipt
+
+      const dbType = formData.type === 'receipt' ? 'CREDIT' : 'DEBIT';
+      const particulars = formData.type === 'receipt' 
+        ? `Cash received from ${formData.personName}` 
+        : `Cash paid to ${formData.personName}`;
+
       // Insert into transactions as CASHBOOK source
       const { data: newTransaction, error } = await supabase
         .from('transactions')
@@ -244,12 +261,10 @@ export default function CashBookPage() {
           date: formData.date,
           party_id: '',
           party_name: formData.personName,
-          particulars: formData.type === 'receipt' 
-            ? `Cash received from ${formData.personName}` 
-            : `Cash paid to ${formData.personName}`,
+          particulars: particulars,
           folio: formData.ledgerFolio,
           amount: amountVal,
-          type: formData.type === 'receipt' ? 'CREDIT' : 'DEBIT',
+          type: dbType, // Database mein CREDIT/DEBIT
           city: formData.cityReference,
           source: 'CASHBOOK',
           is_cashbook_entry: true,
@@ -259,10 +274,6 @@ export default function CashBookPage() {
         .single();
 
       if (error) throw error;
-
-      // **UPDATED: If it's a RECEIPT, DO NOT create a ledger credit entry**
-      // If it's a PAYMENT, DO NOT create a ledger debit entry
-      // Only ledger se aane wale entries sync hongi automatically
 
       await fetchEntries();
 
@@ -306,27 +317,28 @@ export default function CashBookPage() {
 
       if (fetchError) throw fetchError;
 
+      // **IMPORTANT: Database mein correct mapping**
+      const dbType = formData.type === 'receipt' ? 'CREDIT' : 'DEBIT';
+      const particulars = formData.type === 'receipt' 
+        ? `Cash received from ${formData.personName}` 
+        : `Cash paid to ${formData.personName}`;
+
       // Update the cashbook entry
       const { error } = await supabase
         .from('transactions')
         .update({
           date: formData.date,
           party_name: formData.personName,
-          particulars: formData.type === 'receipt' 
-            ? `Cash received from ${formData.personName}` 
-            : `Cash paid to ${formData.personName}`,
+          particulars: particulars,
           folio: formData.ledgerFolio,
           amount: amountVal,
-          type: formData.type === 'receipt' ? 'CREDIT' : 'DEBIT',
+          type: dbType, // Database mein CREDIT/DEBIT
           city: formData.cityReference,
           updated_at: new Date().toISOString()
         })
         .eq('id', editingId);
 
       if (error) throw error;
-
-      // **UPDATED: Don't update ledger entries from cashbook**
-      // Only sync happens from ledger to cashbook, not vice versa
 
       await fetchEntries();
 
@@ -358,9 +370,6 @@ export default function CashBookPage() {
         .single();
 
       if (fetchError) throw fetchError;
-
-      // **UPDATED: Don't delete linked ledger entries**
-      // Cashbook entries are independent
 
       // Delete the cashbook entry
       const { error } = await supabase
