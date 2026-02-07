@@ -4,7 +4,11 @@ import { fbrClient } from "@/lib/fbrClient";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+<<<<<<< HEAD
     const endpoint = "/validateinvoicedata";
+=======
+    const endpoint = "/validateinvoicedata_sb";
+>>>>>>> 76ba5fc2a6a34b5f5032011774b0566b0986aa83
 
     console.log("[VALIDATE] Sending to:", endpoint);
     console.log("[Seller NTN]:", body.sellerNTNCNIC);
